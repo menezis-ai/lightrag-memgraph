@@ -1,0 +1,73 @@
+{
+  "source_revision": "88666dab63bf5b43f2307719cb0d576a7038a078",
+  "base_revision": "5bd2b7773e44c03ddd7e17aa76c51f686a589b04",
+  "date": "2026-10-29",
+  "server": {
+    "image": "memgraph/memgraph-mage:3.14.0",
+    "digest": "sha256:2ad342a011fb463c43af821f72ca627eee2b63a39dc663f5928355a9fd01d20a",
+    "memory_bytes": 2147483648,
+    "cpus": 2
+  },
+  "runner_image_digest": "sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1",
+  "current": {
+    "python": "3.12.15",
+    "packages": {
+      "lightrag-memgraph": "0.7.0",
+      "lightrag-hku": "1.5.7",
+      "neo4j": "6.4.1",
+      "numpy": "2.5.4",
+      "pytest": "9.2.0"
+    }
+  },
+  "minimum": {
+    "python": "3.12.15",
+    "packages": {
+      "lightrag-memgraph": "0.7.0",
+      "lightrag-hku": "1.4.9",
+      "neo4j": "5.28.8",
+      "numpy": "2.5.4",
+      "pytest": "9.2.0"
+    }
+  },
+  "results": {
+    "current_full": {
+      "tests": 518,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 3,
+      "passed": 515,
+      "seconds": 69.399
+    },
+    "current_identity": {
+      "tests": 59,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 59,
+      "seconds": 6.811
+    },
+    "minimum": {
+      "tests": 311,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 13,
+      "passed": 298,
+      "seconds": 13.776
+    },
+    "current_scale": {
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 3,
+      "seconds": 20.57
+    }
+  },
+  "notes": [
+    "Tests import the installed 0.7.0 candidate wheel, without PYTHONPATH source override.",
+    "The complete current suite ran before five additional migration/lifecycle cases were added; all 59 final identity cases were then rerun against that same wheel.",
+    "Minimum uses Python 3.12 locally; Python 3.10 coverage belongs to the CI matrix.",
+    "Server and all test data were disposable; no production data was accessed.",
+    "Historic benchmark numbers pinned to b881ab0 are not measurements of this change."
+  ]
+}

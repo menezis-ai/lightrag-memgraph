@@ -246,6 +246,9 @@ async def test_control_plane_propagates_transport_errors_and_invalid_json(
     with pytest.raises(ValueError):
         await store.get_full_docs_by_ids(["doc"], strict=True)
 
+    kv = MemgraphKVStorage("full_docs", {}, None)
+    await kv.initialize()
+
     def broken():
         raise OSError("transport unavailable")
 
@@ -258,7 +261,7 @@ async def test_control_plane_propagates_transport_errors_and_invalid_json(
             store.get_docs_by_ids(["doc"], strict=True),
             store.get_full_docs_by_ids(["doc"], strict=True),
             store.count_docs_by_statuses([DocStatus.PENDING]),
-            MemgraphKVStorage("full_docs", {}, None).get_by_id_strict("doc"),
+            kv.get_by_id_strict("doc"),
         ]
         for call in calls:
             with pytest.raises(OSError, match="transport unavailable"):

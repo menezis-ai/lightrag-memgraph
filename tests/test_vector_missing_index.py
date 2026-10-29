@@ -11,9 +11,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
+from tests.conftest import initialized_mock
 from lightrag.utils import EmbeddingFunc
 from neo4j.exceptions import AuthError, ClientError, Forbidden, ServiceUnavailable
 
+from lightrag_memgraph import _pool
 from lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
 
 
@@ -28,7 +30,7 @@ def _make_store():
     store.embedding_func = EmbeddingFunc(embedding_dim=4, func=AsyncMock())
     store._vector_config = {"capacity": 100_000}
     store.capabilities = None
-    return store
+    return initialized_mock(store)
 
 
 class TestQueryMissingIndex:
@@ -86,10 +88,10 @@ class TestQueryMissingIndex:
         async def _create_ctx():
             yield create_session
 
-        with patch("lightrag_memgraph.vector_impl._pool") as mock_pool:
-            mock_pool.get_read_session = MagicMock(return_value=read_ctx)
-            mock_pool.get_session = MagicMock(return_value=_create_ctx())
-
+        with (
+            patch.object(_pool, "get_read_session", return_value=read_ctx),
+            patch.object(_pool, "get_session", _create_ctx),
+        ):
             results = await store.query(
                 query="test",
                 top_k=5,
@@ -135,13 +137,13 @@ class TestQueryMissingIndex:
         async def _create_ctx():
             yield create_session
 
-        with patch("lightrag_memgraph.vector_impl._pool") as mock_pool:
-            mock_pool.get_read_session = MagicMock(return_value=read_ctx)
-            mock_pool.get_session = MagicMock(return_value=_create_ctx())
-
+        with (
+            patch.object(_pool, "get_read_session", return_value=read_ctx),
+            patch.object(_pool, "get_session", _create_ctx),
+        ):
             with pytest.raises(
                 RuntimeError,
-                match="Vector index vec_base_relationships recovery failed",
+                match="Vector index LRMG2_VECTOR_INDEX_w4_base_n13_relationships recovery failed",
             ) as caught:
                 await store.query(
                     query="test",
@@ -172,7 +174,8 @@ class TestQueryMissingIndex:
         store.query_text = AsyncMock(return_value=[{"id": "lexical-only"}])
 
         with pytest.raises(
-            RuntimeError, match="Vector index vec_base_relationships recovery failed"
+            RuntimeError,
+            match="Vector index LRMG2_VECTOR_INDEX_w4_base_n13_relationships recovery failed",
         ) as caught:
             await store.query("test", 5, query_embedding=[1, 0, 0, 0])
         assert caught.value.__cause__ is failure
@@ -192,9 +195,7 @@ class TestQueryMissingIndex:
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("lightrag_memgraph.vector_impl._pool") as mock_pool:
-            mock_pool.get_read_session = MagicMock(return_value=mock_ctx)
-
+        with patch.object(_pool, "get_read_session", return_value=mock_ctx):
             with pytest.raises(Exception, match="Connection refused"):
                 await store.query(
                     query="test",

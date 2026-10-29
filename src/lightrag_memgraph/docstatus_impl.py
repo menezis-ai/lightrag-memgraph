@@ -2,7 +2,7 @@
 Document Status Storage backend using Memgraph.
 
 Each doc status is a Cypher node:
-  Label: :DocStatus_{workspace}
+  Label: :LRMG2_STATUS_w{len(workspace)}_{workspace}_n{len(namespace)}_{namespace}
   Properties: id, status, created_at, updated_at, chunks_count,
               content_summary, content_length, error_msg,
               metadata (JSON), track_id, file_path, chunks_list (JSON)
@@ -20,11 +20,23 @@ from lightrag.utils import logger
 from . import _pool
 from ._constants import DEFAULT_PAGE_SIZE, resolve_workspace, validate_identifier
 from ._docstatus_v15 import DocStatusSchedulingMixin
+from ._identity import (
+    StorageIdentityMixin,
+    initialization_context,
+    initialization_session,
+    initialize_identity,
+    invalidate_identity,
+    mark_identity_ready,
+    storage_label,
+)
 
 
 @dataclass
-class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
+class MemgraphDocStatusStorage(
+    StorageIdentityMixin, DocStatusSchedulingMixin, DocStatusStorage
+):
     supports_strict_point_reads: ClassVar[bool] = True
+    _storage_kind: ClassVar[str] = "status"
 
     def __init__(
         self, namespace, global_config, embedding_func, *, workspace=None, **kwargs
@@ -39,9 +51,11 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
         )
 
     def _label(self) -> str:
-        return f"DocStatus_{self.workspace}"
+        return storage_label(self._storage_kind, self.workspace, self.namespace)
 
     async def initialize(self):
+        invalidate_identity(self)
+        context = initialization_context(self, self._storage_kind)
         label = self._label()
         _, database = await _pool.get_driver()
         logger.info(
@@ -51,7 +65,8 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
             database,
             label,
         )
-        async with _pool.get_session() as session:
+        async with initialization_session() as session:
+            await initialize_identity(self, self._storage_kind, session)
             for prop in [
                 "id",
                 "status",
@@ -78,10 +93,11 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
                             prop,
                             e,
                         )
+        mark_identity_ready(self, self._storage_kind, context)
         logger.info(f"[MemgraphDocStatus:{self.workspace}] Indexes created on :{label}")
 
     async def finalize(self):
-        pass  # Shared driver; closed globally via _pool.close_driver()
+        invalidate_identity(self)
 
     async def index_done_callback(self):
         pass  # Memgraph persists automatically, no flush needed
@@ -226,7 +242,7 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
 
     async def _get_by_id(self, id: str, *, strict: bool) -> dict[str, Any] | None:
         label = self._label()
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"MATCH (n:`{label}` {{id: $id}}) RETURN properties(n) AS props",
                 id=id,
@@ -239,7 +255,7 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
 
     async def get_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
         label = self._label()
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"""
                 UNWIND $ids AS target_id
@@ -256,7 +272,7 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
 
     async def filter_keys(self, keys: set[str]) -> set[str]:
         label = self._label()
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"""
                 UNWIND $keys AS k
@@ -291,7 +307,7 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
             entries.append({"id": doc_id, "created_at": created_at, "props": props})
 
         async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
+            async with self._write_session() as session:
                 result = await session.run(
                     f"""
                     UNWIND $entries AS e
@@ -306,7 +322,7 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
     async def delete(self, ids: list[str]) -> None:
         label = self._label()
         async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
+            async with self._write_session() as session:
                 result = await session.run(
                     f"""
                     UNWIND $ids AS target_id
@@ -319,7 +335,7 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
 
     async def is_empty(self) -> bool:
         label = self._label()
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"MATCH (n:`{label}`) RETURN count(n) AS cnt LIMIT 1"
             )
@@ -331,7 +347,7 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
 
     async def get_status_counts(self) -> dict[str, int]:
         label = self._label()
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"MATCH (n:`{label}`) RETURN n.status AS status, count(n) AS cnt"
             )
@@ -353,7 +369,7 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
         status_values = [status.value for status in statuses]
         if not status_values:
             return {}
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"""
                 MATCH (n:`{label}`)
@@ -379,7 +395,7 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
         self, track_id: str
     ) -> dict[str, DocProcessingStatus]:
         label = self._label()
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"""
                 MATCH (n:`{label}` {{track_id: $track_id}})
@@ -425,7 +441,7 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
         # cuts round-trip time roughly in half on large collections, which
         # avoids nginx upstream timeouts (→ 502 Bad Gateway) on /documents/paginated.
         async def _count() -> int:
-            async with _pool.get_read_session() as session:
+            async with self._read_session() as session:
                 result = await session.run(
                     f"MATCH (n:`{label}`) {where_clause} RETURN count(n) AS total",
                     **params,
@@ -435,7 +451,7 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
                 return record["total"] if record else 0
 
         async def _fetch() -> list[tuple[str, DocProcessingStatus]]:
-            async with _pool.get_read_session() as session:
+            async with self._read_session() as session:
                 result = await session.run(
                     f"""
                     MATCH (n:`{label}`) {where_clause}
@@ -463,7 +479,7 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
 
     async def get_doc_by_file_path(self, file_path: str) -> dict[str, Any] | None:
         label = self._label()
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"""
                 MATCH (n:`{label}` {{file_path: $file_path}})
@@ -480,7 +496,7 @@ class MemgraphDocStatusStorage(DocStatusSchedulingMixin, DocStatusStorage):
     async def drop(self) -> dict[str, str]:
         label = self._label()
         async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
+            async with self._write_session() as session:
                 result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
                 await result.consume()
         return {"status": "success", "message": f"DocStatus {label} dropped"}

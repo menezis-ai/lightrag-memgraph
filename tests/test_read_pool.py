@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from tests.conftest import initialized_mock
 
 import lightrag_memgraph._pool as pool
 
@@ -229,7 +230,7 @@ class TestBackendReadPoolIntegration:
         store.workspace = "test"
         store.global_config = {}
         store.embedding_func = None
-        return store
+        return initialized_mock(store)
 
     @pytest.fixture
     def doc_store(self, monkeypatch):
@@ -241,7 +242,7 @@ class TestBackendReadPoolIntegration:
         store.workspace = "test"
         store.global_config = {}
         store.embedding_func = None
-        return store
+        return initialized_mock(store)
 
     @pytest.fixture
     def vec_store(self, monkeypatch):
@@ -255,7 +256,7 @@ class TestBackendReadPoolIntegration:
         store.embedding_func = None
         store.meta_fields = set()
         store.cosine_better_than_threshold = 0.2
-        return store
+        return initialized_mock(store)
 
     async def test_kv_get_by_id_uses_read_pool(self, kv_store):
         read_calls = []

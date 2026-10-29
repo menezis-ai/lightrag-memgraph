@@ -57,7 +57,11 @@ async def stores(monkeypatch):
     finally:
         for store in (vectors, status):
             # Only this test's randomly allocated labels/indexes are removed.
-            await store.drop()
+            if (
+                not hasattr(store, "_storage_kind")
+                or getattr(store, "_verified_storage_identity", None) is not None
+            ):
+                await store.drop()
             async with _pool.get_session() as session:
                 rows = await (await session.run("SHOW INDEX INFO")).data()
                 for row in rows:

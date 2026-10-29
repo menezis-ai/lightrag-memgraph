@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
+from tests.conftest import initialized_mock
 from lightrag.utils import EmbeddingFunc, priority_limit_async_func_call
 
 from lightrag_memgraph import _pool
@@ -240,15 +241,17 @@ async def test_slow_embedding_does_not_block_kv_writes(embedding_factory, monkey
 
     monkeypatch.setattr(_pool, "get_session", session)
     store = store_for(embedding_factory(provider))
+    initialized_mock(store)
     task = asyncio.create_task(store.upsert({"a": {"content": "document"}}))
     try:
         await asyncio.wait_for(started.wait(), 2)
         kv = MemgraphKVStorage("status", {}, None, workspace="other")
+        initialized_mock(kv)
         await asyncio.wait_for(kv.upsert({"id": {"status": "processed"}}), 1)
-        assert len(writes) == 1 and "KV_other_status" in writes[0]
+        assert len(writes) == 1 and kv._label() in writes[0]
         release.set()
         await task
-        assert len(writes) == 2 and "Vec_embedding_contract" in writes[1]
+        assert len(writes) == 2 and store._label() in writes[1]
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)
@@ -274,6 +277,7 @@ async def test_batch_failure_or_cancellation_never_writes(
     data = {"good": {"content": "wait"}}
     if not cancel:
         data["bad"] = {"content": "bad"}
+    initialized_mock(store)
     task = asyncio.create_task(store.upsert(data))
     try:
         await asyncio.wait_for(started.wait(), 2)

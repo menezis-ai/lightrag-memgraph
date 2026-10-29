@@ -77,6 +77,10 @@ data volume. Preserve your actual deployment's existing data mount before
 recreating any container; changing an image tag alone does not preserve an
 unmounted container data directory.
 
+These server-upgrade steps assume the adapter identity format is unchanged.
+Upgrading the adapter to 0.7 also requires its separate [storage migration](migration-0.7.0.md);
+do not start it against legacy labels expecting an automatic upgrade.
+
 1. Record the current image/version and configuration. Create a snapshot and
    back up the durability directory, access configuration and custom modules.
 2. Restore a copy into an isolated instance and rehearse the upgrade using the

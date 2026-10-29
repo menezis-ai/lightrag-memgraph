@@ -182,8 +182,8 @@ async def _cleanup(workspace: str):
     """Drop all data tagged with this workspace from Memgraph."""
     try:
         async with _pool.get_session() as session:
-            for prefix in ("KV_", "Vec_", "DocStatus_"):
-                label = f"{prefix}{workspace}"
+            for kind in ("KV", "VECTOR", "STATUS", "GRAPH"):
+                label = f"LRMG2_{kind}_w{len(workspace)}_{workspace}_n"
                 try:
                     result = await session.run(
                         f"MATCH (n) WHERE ANY(l IN labels(n) "
@@ -192,12 +192,7 @@ async def _cleanup(workspace: str):
                     await result.consume()
                 except Exception:
                     pass
-            try:
-                result = await session.run(
-                    f"MATCH (n:`{workspace}`) DETACH DELETE n"
-                )
-                await result.consume()
-            except Exception:
+    except Exception:
                 pass
     except Exception:
         pass

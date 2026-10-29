@@ -9,7 +9,6 @@ Run:
 """
 
 import asyncio
-import json
 import statistics
 import time
 import uuid
@@ -304,7 +303,7 @@ class TestVectorBenchmark:
         for _ in range(n_queries):
             qe = _random_embedding()
             t_start = time.perf_counter()
-            results = await vec_store.query("", top_k=10, query_embedding=qe)
+            await vec_store.query("", top_k=10, query_embedding=qe)
             latencies.append((time.perf_counter() - t_start) * 1000)
         total = time.perf_counter() - t0
 
@@ -429,7 +428,7 @@ class TestDocStatusBenchmark:
         latencies = []
         for _ in range(20):
             t_start = time.perf_counter()
-            counts = await doc_store.get_status_counts()
+            await doc_store.get_status_counts()
             latencies.append((time.perf_counter() - t_start) * 1000)
         total = sum(latencies) / 1000
 
@@ -489,38 +488,18 @@ _seq_get_nodes_edges_batch = BaseGraphStorage.get_nodes_edges_batch
 
 @pytest.fixture
 async def graph_store():
-    """Initialize MemgraphStorage directly (bypasses USE DATABASE for Community)."""
-    import os
-
+    """Benchmark an initialized adapter against its real ownership contract."""
     from lightrag.kg.memgraph_impl import MemgraphStorage
-    from neo4j import AsyncGraphDatabase as _AsyncGD
+    from lightrag.kg.shared_storage import initialize_share_data
 
-    ws = f"bench_{uuid.uuid4().hex[:8]}"
-    uri = os.environ.get("MEMGRAPH_URI", "bolt://localhost:7687")
-    driver = _AsyncGD.driver(uri, auth=("", ""))
-
-    store = MemgraphStorage.__new__(MemgraphStorage)
-    store.workspace = ws
-    store.namespace = ws
-    store._driver = driver
-    store._DATABASE = ""
-
-    # Create index for the workspace label
-    async with driver.session() as session:
-        try:
-            await session.run(f"CREATE INDEX ON :`{ws}`(entity_id)")
-        except Exception:
-            pass
-        await session.run("RETURN 1")
-
-    yield store
-    # Cleanup
+    initialize_share_data(workers=1)
+    store = MemgraphStorage("graph", {}, None, workspace=f"bench_{uuid.uuid4().hex[:8]}")
+    await store.initialize()
     try:
-        async with driver.session() as session:
-            await session.run(f"MATCH (n:`{ws}`) DETACH DELETE n")
-    except Exception:
-        pass
-    await driver.close()
+        yield store
+    finally:
+        await store.drop()
+        await store.finalize()
 
 
 async def _seed_graph(store, n_nodes: int, n_edges_per_node: int = 2):

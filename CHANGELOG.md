@@ -1,9 +1,25 @@
 # Changelog
 
-## 0.6.2 (unreleased candidate)
+## 0.7.0 (unreleased candidate)
 
-Publication is held while P1 label collisions (#21) remain unresolved. See the
-[upgrade notes](docs/migration-0.6.2.md).
+This candidate supersedes the unpublished 0.6.2 preparation. Physical storage
+identities change; follow the [upgrade guide](docs/migration-0.7.0.md).
+
+- Encode storage kind, workspace and namespace with versioned length framing.
+  Separate graph/KV/vector/status labels and vector/text index names, including
+  underscores, reserved-looking workspaces and document-status namespaces (#21).
+- Verify ownership in a persistent, uniquely keyed registry before data access.
+  Refuse ambiguous legacy data/indexes or unclaimed new-format targets without
+  changing them. Retain ownership records when dropping a store. Reserve the
+  `LRMG2_` entity-type prefix to prevent cross-storage co-labeling.
+- Require successful initialization for data I/O. Invalidate verification after
+  finalization, pool reset or identity/connection changes. Reject connection
+  configuration changes with active pools rather than verifying a different DB
+  through a cached driver. This does not fix concurrent event-loop ownership.
+- Provide a read-only JSON inventory (`python -m lightrag_memgraph.migration`)
+  and an explicit backup/re-ingestion migration path; no automatic in-place
+  adoption or destructive migration. Qualify identical-ID isolation, refusal
+  without legacy data/index mutation and concurrent startup on real Memgraph.
 
 - Call LightRAG's `EmbeddingFunc` wrapper for both query and document vectors,
   preserving dimension/token injection, concurrency limiting and asymmetric
@@ -24,8 +40,8 @@ Publication is held while P1 label collisions (#21) remain unresolved. See the
   helpers may still swallow backend errors (#23).
 - Use `lightrag-memgraph` as the distribution and project name and
   `lightrag_memgraph` as the Python namespace. Update imports, LightRAG storage
-  registry paths, logging, tests and CI to the new namespace. Existing database
-  labels and vector index names are unchanged. Update application imports and
+  registry paths, logging, tests and CI to the new namespace. The import rename
+  itself preserves stored IDs; 0.7 physical identities require migration. Update application imports and
   restart running processes when upgrading. Install this repository from GitHub;
   the same-named PyPI distribution is a separate project.
 - Add a runnable fixture/live-provider lifecycle tutorial, requalify the open

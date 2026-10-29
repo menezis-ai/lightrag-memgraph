@@ -45,7 +45,7 @@ class DocStatusSchedulingMixin:
                 f" AND ({key} > $created OR ({key} = $created AND n.id > $last_id))"
             )
             params = {**params, "created": after[0], "last_id": after[1]}
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"MATCH (n:`{self._label()}`) WHERE {where} "
                 f"RETURN {projection} AS props, {key} AS created, n.id AS id "
@@ -136,7 +136,7 @@ class DocStatusSchedulingMixin:
         # Chunk caller-provided batches as well as server-side scheduling sweeps.
         ids = list(dict.fromkeys(doc_ids))
         for offset in range(0, len(ids), 256):
-            async with _pool.get_read_session() as session:
+            async with self._read_session() as session:
                 result = await session.run(
                     f"UNWIND $ids AS target_id MATCH (n:`{self._label()}` {{id: target_id}}) "
                     f"RETURN n.id AS id, {projection} AS props",
@@ -174,7 +174,7 @@ class DocStatusSchedulingMixin:
     async def count_docs_by_statuses(self, statuses, *, strict=True):
         if not statuses:
             return 0
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"MATCH (n:`{self._label()}`) WHERE n.status IN $statuses RETURN count(n) AS count",
                 statuses=[s.value for s in statuses],
@@ -194,7 +194,7 @@ class DocStatusSchedulingMixin:
             raise ValueError("Internal document status fields cannot be updated")
         props = self._encode_status_fields(fields)
         async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
+            async with self._write_session() as session:
                 result = await session.run(
                     f"MATCH (n:`{self._label()}` {{id: $id}}) SET n += $props RETURN n.id AS id",
                     id=doc_id,

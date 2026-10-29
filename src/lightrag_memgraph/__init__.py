@@ -25,6 +25,8 @@ from .capabilities import inspect_memgraph as inspect_memgraph
 
 from ._hooks import clear_post_index_hooks as clear_post_index_hooks
 from ._hooks import register_post_index_hook as register_post_index_hook
+from ._identity import LegacyStorageError as LegacyStorageError
+from ._identity import StorageIdentityError as StorageIdentityError
 
 logger = logging.getLogger("lightrag_memgraph")
 
@@ -42,6 +44,8 @@ __all__ = [
     "MemgraphCapabilities",
     "inspect_memgraph",
     "__version__",
+    "LegacyStorageError",
+    "StorageIdentityError",
 ]
 
 
@@ -134,6 +138,8 @@ def _patch_builtin_memgraph_storage():
     without having to monkey-patch each one individually.
     """
     from contextlib import asynccontextmanager
+    from functools import wraps
+    import inspect
 
     from lightrag.base import BaseGraphStorage
     from lightrag.kg.memgraph_impl import MemgraphStorage
@@ -142,6 +148,11 @@ def _patch_builtin_memgraph_storage():
 
     from ._constants import resolve_workspace, validate_entity_type, validate_identifier
     from ._pool import _read_connection_config, _uses_routing_protocol
+    from . import _pool
+    from ._identity import (
+        guard_graph_method, initialization_context, initialize_identity,
+        invalidate_identity, mark_identity_ready, require_identity, storage_label,
+    )
 
     _original_logger = None
     try:
@@ -150,6 +161,7 @@ def _patch_builtin_memgraph_storage():
         pass
 
     def _patched_init(self, namespace, global_config, embedding_func, workspace=None):
+        validate_identifier(namespace, "namespace")
         # Upstream constructors in supported LightRAG releases give the global
         # MEMGRAPH_WORKSPACE variable priority. All four stores must instead
         # honor the same per-instance workspace, without temporarily editing env.
@@ -161,8 +173,14 @@ def _patch_builtin_memgraph_storage():
             embedding_func=embedding_func,
         )
         self._driver = None
+        invalidate_identity(self)
 
     MemgraphStorage.__init__ = _patched_init
+
+    def _physical_graph_label(self):
+        return storage_label("graph", self.workspace, self.namespace)
+
+    MemgraphStorage._get_workspace_label = _physical_graph_label
 
     # Older LightRAG writers interpolate entity_type as a label. Keep their
     # immediate transaction/retry path and reject unsafe delimiters before I/O.
@@ -172,9 +190,11 @@ def _patch_builtin_memgraph_storage():
         async def _safe_upsert_node(self, node_id, node_data):
             if "entity_type" in node_data:
                 validate_entity_type(node_data["entity_type"])
+            require_identity(self, "graph")
             return await original_upsert_node(self, node_id, node_data)
 
         _safe_upsert_node._lightrag_memgraph_validates_entity_type = True
+        _safe_upsert_node._lightrag_memgraph_identity_guarded = True
         MemgraphStorage.upsert_node = _safe_upsert_node
 
     batch_upsert = getattr(MemgraphStorage, "upsert_nodes_batch", None)
@@ -187,9 +207,11 @@ def _patch_builtin_memgraph_storage():
             for _, node_data in nodes:
                 if "entity_type" in node_data:
                     validate_entity_type(node_data["entity_type"])
+            require_identity(self, "graph")
             return await original_upsert_nodes_batch(self, nodes)
 
         _safe_upsert_nodes_batch._lightrag_memgraph_validates_entity_type = True
+        _safe_upsert_nodes_batch._lightrag_memgraph_identity_guarded = True
         MemgraphStorage.upsert_nodes_batch = _safe_upsert_nodes_batch
 
     class _SafeDriverWrapper:
@@ -264,6 +286,12 @@ def _patch_builtin_memgraph_storage():
 
     async def _patched_initialize(self):
         async with get_data_init_lock():
+            invalidate_identity(self)
+            context = initialization_context(self, "graph")
+            previous_driver = self._driver
+            self._driver = None
+            if previous_driver is not None:
+                await previous_driver.close()
             uri, database, driver_kwargs = _read_connection_config()
             database = database or "memgraph"
             validate_identifier(database, "database")
@@ -276,6 +304,8 @@ def _patch_builtin_memgraph_storage():
 
             try:
                 async with self._driver.session() as session:
+                    async with _pool.acquire_write_slot():
+                        await initialize_identity(self, "graph", session)
                     try:
                         workspace_label = self._get_workspace_label()
                         result = await session.run(
@@ -294,6 +324,7 @@ def _patch_builtin_memgraph_storage():
 
                     result = await session.run("RETURN 1")
                     await result.consume()
+                    mark_identity_ready(self, "graph", context)
                     if _original_logger:
                         _original_logger.info(
                             f"[MemgraphGraph:{self.workspace}] GRAPH storage "
@@ -301,6 +332,13 @@ def _patch_builtin_memgraph_storage():
                             f"(db={database}, patched for TLS + multi-db)"
                         )
             except Exception as e:
+                failed_driver = self._driver
+                self._driver = None
+                invalidate_identity(self)
+                try:
+                    await failed_driver.close()
+                except Exception:
+                    pass
                 if _original_logger:
                     _original_logger.error(
                         f"[{self.workspace}] Failed to connect to Memgraph: {type(e).__name__}"
@@ -571,6 +609,24 @@ def _patch_builtin_memgraph_storage():
     MemgraphStorage.get_nodes_edges_batch = _patched_get_nodes_edges_batch
     MemgraphStorage.get_nodes_with_degrees_batch = _patched_get_nodes_with_degrees_batch
     MemgraphStorage.get_edges_with_degrees_batch = _patched_get_edges_with_degrees_batch
+
+    if not getattr(MemgraphStorage.finalize, "_lightrag_memgraph_identity_finalizer", False):
+        original_finalize = MemgraphStorage.finalize
+
+        @wraps(original_finalize)
+        async def _identity_finalize(self):
+            invalidate_identity(self)
+            return await original_finalize(self)
+
+        _identity_finalize._lightrag_memgraph_identity_finalizer = True
+        MemgraphStorage.finalize = _identity_finalize
+
+    for name in dir(MemgraphStorage):
+        if name.startswith("_") or name in {"initialize", "finalize", "index_done_callback"}:
+            continue
+        method = getattr(MemgraphStorage, name)
+        if inspect.iscoroutinefunction(method) and not getattr(method, "_lightrag_memgraph_identity_guarded", False):
+            setattr(MemgraphStorage, name, guard_graph_method(method))
 
     # -- Monkey-patch operate.py hot paths to use fused queries --
     _patch_operate_hot_paths()

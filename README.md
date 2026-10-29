@@ -164,10 +164,20 @@ native ANN failures under deletion churn and is excluded from load qualification
 | Vector | `MemgraphVectorDBStorage` | Embeddings and metadata with a native cosine vector index |
 | Document status | `MemgraphDocStatusStorage` | Processing status, source path, timestamps and chunk references |
 
-KV and vector labels use the workspace and namespace; document-status labels
-use the workspace. Writes use parameterized Cypher and batched `UNWIND` queries.
-See the [data integrity and workspace migration notes](docs/data-integrity.md)
-before changing an existing deployment's workspace configuration.
+All four backends use distinct, versioned labels encoding both workspace and
+namespace with component lengths. For example, KV `(a, b_c)` uses
+`LRMG2_KV_w1_a_n3_b_c`, while `(a_b, c)` uses `LRMG2_KV_w3_a_b_n1_c`.
+A persistent `LRMG2_REGISTRY` record verifies each physical store's ownership.
+Writes use parameterized Cypher and batched `UNWIND` queries.
+
+**Upgrading an existing database requires an explicit migration.** Initialization
+refuses ambiguous legacy data/indexes and unclaimed new-format targets before
+accessing application data. It never silently adopts, renames or deletes them.
+Run `python -m lightrag_memgraph.migration --output inventory.json` for a read-only
+inventory, then follow the [0.7 upgrade guide](docs/migration-0.7.0.md).
+Direct storage instances must call `await initialize()` before data access.
+Entity types beginning with `LRMG2_` (case-insensitive) are reserved; logical
+workspace/namespace names with that prefix remain valid.
 
 LightRAG's storage registry is populated at import time. `register()` adds this
 package's three backends and patches the built-in graph backend for connection
@@ -204,17 +214,19 @@ overlapping document merges for both entities and relationships in every CI
 dependency profile.
 
 The latest published release is **0.6.1**. `main` carries the unreleased
-**0.6.2 candidate**; see
-[CHANGELOG.md](CHANGELOG.md) and the [upgrade notes](docs/migration-0.6.2.md).
+**0.7.0 candidate**; see
+[CHANGELOG.md](CHANGELOG.md) and the [upgrade notes](docs/migration-0.7.0.md).
 Registration keeps the build version visible through LightRAG's `core_version`,
-with the suffix `+memgraph-0.6.2` for this candidate.
+with the suffix `+memgraph-0.7.0` for this candidate.
 
 <a id="memgraph-capabilities-and-optional-retrieval-features"></a>
 
 ## Vector, full-text and hybrid search
 
-Existing applications keep cosine vector retrieval, their labels, identifiers,
-metadata and index names. New retrieval features are opt-in. Initialization
+Cosine vector retrieval remains the default; optional retrieval features are
+opt-in. Version 0.7 changes physical labels/index names and requires the explicit
+[storage migration](docs/migration-0.7.0.md); logical document IDs and model
+configuration can be retained when re-ingesting trusted source manifests. Initialization
 reads `SHOW VERSION`, `mg.procedures()` signatures and vector index metadata
 from the selected database. It does not change server settings, load modules,
 recreate an existing vector index or migrate access permissions.
@@ -284,7 +296,7 @@ At the adapter level, vector and hybrid callers receive the failure rather than
 empty hits. On LightRAG 1.5.7, `aquery_llm()` reports `status="failure"`, while
 the legacy `aquery()` wrapper returns `None`. Older 1.4 query helpers may catch
 backend failures and return empty context. See the
-[migration notes](docs/migration-0.6.2.md#retrieval-behavior-changes).
+[migration notes](docs/migration-0.7.0.md#retrieval-behavior-changes).
 
 On an initialized `MemgraphVectorDBStorage`:
 
@@ -363,11 +375,12 @@ in Memgraph does not determine where model inference runs.
 
 ### What should I check before a multi-tenant or production deployment?
 
-Workspace scoping is not an authorization boundary. Review the
-[data integrity notes](docs/data-integrity.md) and open audit findings for
-[label collisions](https://github.com/menezis-ai/lightrag-memgraph/issues/21).
-Embedding-wrapper compatibility (#22) and vector-index error reporting (#23)
-are corrected in the 0.6.2 candidate. Publication remains on hold for #21.
+Workspace scoping does not enforce authorization. The 0.7 candidate addresses
+[label collisions](https://github.com/menezis-ai/lightrag-memgraph/issues/21) with
+versioned identities, ownership checks and refusal of ambiguous legacy data.
+Read the [migration guide](docs/migration-0.7.0.md) before upgrading and retain
+separate database access controls for independent tenants. Embedding-wrapper
+compatibility (#22) and vector-index error reporting (#23) retain their fixes.
 The Community CI matrix does not qualify Enterprise authorization or HA failover.
 
 <a id="testing"></a>
@@ -450,6 +463,7 @@ pipeline follows [the ingestion validation procedure](docs/ingestion-validation.
 
 - [LightRAG and Memgraph compatibility, CI matrix and engine upgrades](docs/memgraph-compatibility.md)
 - [Storage integrity, workspace migration and deletion validation](docs/data-integrity.md)
+- [Storage identity isolation qualification](docs/storage-identity-qualification.md)
 - [Embedding scheduling, large-upsert reproduction and error boundaries](docs/embedding-qualification.md)
 - [PDF ingestion responsiveness and deployment validation](docs/ingestion-validation.md)
 - [Package changelog](CHANGELOG.md) and [GitHub releases](https://github.com/menezis-ai/lightrag-memgraph/releases)

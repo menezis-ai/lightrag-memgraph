@@ -9,8 +9,14 @@ and that each returns the correct types from a single UNWIND query.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from tests.conftest import initialized_mock
 
 import lightrag_memgraph
+
+
+@pytest.fixture(autouse=True)
+def mock_identity_bootstrap(monkeypatch):
+    monkeypatch.setattr("lightrag_memgraph._identity.initialize_identity", AsyncMock())
 
 
 def _reset():
@@ -26,9 +32,10 @@ def _make_storage(workspace="test_ws"):
 
     storage = MemgraphStorage.__new__(MemgraphStorage)
     storage.workspace = workspace
+    storage.namespace = "graph"
     storage._DATABASE = "memgraph"
     storage._driver = MagicMock()
-    return storage
+    return initialized_mock(storage)
 
 
 class _FakeRecord(dict):
@@ -141,7 +148,7 @@ class TestBatchMethodsPatched:
 class TestGetNodesBatch:
     async def test_returns_dict_of_nodes(self):
         storage = _make_storage()
-        node_data = {"entity_id": "alice", "type": "person", "labels": ["test_ws"]}
+        node_data = {"entity_id": "alice", "type": "person", "labels": [storage._get_workspace_label()]}
         driver, session = _mock_session_with_records([{"eid": "alice", "n": node_data}])
         storage._driver = driver
 
@@ -151,7 +158,7 @@ class TestGetNodesBatch:
         assert "alice" in result
         assert result["alice"]["type"] == "person"
         # Workspace label should be stripped from labels
-        assert "test_ws" not in result["alice"]["labels"]
+        assert storage._get_workspace_label() not in result["alice"]["labels"]
         # "bob" was not returned by the query => missing from result
         assert "bob" not in result
 
@@ -314,7 +321,7 @@ class TestGetNodesWithDegreesBatch:
 
     async def test_returns_nodes_and_degrees(self):
         storage = _make_storage()
-        node_data = {"entity_id": "alice", "type": "person", "labels": ["test_ws"]}
+        node_data = {"entity_id": "alice", "type": "person", "labels": [storage._get_workspace_label()]}
         driver, session = _mock_session_with_records(
             [{"eid": "alice", "n": node_data, "degree": 3}]
         )
@@ -326,7 +333,7 @@ class TestGetNodesWithDegreesBatch:
 
         assert "alice" in nodes
         assert nodes["alice"]["type"] == "person"
-        assert "test_ws" not in nodes["alice"]["labels"]
+        assert storage._get_workspace_label() not in nodes["alice"]["labels"]
         assert degrees["alice"] == 3
         assert degrees["missing"] == 0  # default for missing
         assert "missing" not in nodes
@@ -898,6 +905,8 @@ class TestPatchedInitialize:
 
         storage = MemgraphStorage.__new__(MemgraphStorage)
         storage.workspace = "test_ws"
+        storage.namespace = "graph"
+        storage._driver = None
 
         uri = "neo4j+s://remote:7687" if use_routing else "bolt://localhost:7687"
 
@@ -968,6 +977,8 @@ class TestPatchedInitialize:
 
         storage = MemgraphStorage.__new__(MemgraphStorage)
         storage.workspace = "test_ws"
+        storage.namespace = "graph"
+        storage._driver = None
 
         with (
             patch(
@@ -1002,6 +1013,7 @@ class TestDriverNoneGuards:
 
         storage = MemgraphStorage.__new__(MemgraphStorage)
         storage.workspace = "test"
+        storage.namespace = "graph"
         storage._DATABASE = "memgraph"
         storage._driver = None
         return storage

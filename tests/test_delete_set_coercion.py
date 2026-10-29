@@ -8,6 +8,7 @@ OFFLINE — no Memgraph needed. All driver calls are mocked.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from tests.conftest import initialized_mock
 
 
 def _make_mock_session():
@@ -33,11 +34,12 @@ def _patch_pool(mock_session):
 def _make_kv_storage():
     from lightrag_memgraph.kv_impl import MemgraphKVStorage
 
-    return MemgraphKVStorage(
+    store = MemgraphKVStorage(
         namespace="chunks",
         global_config={},
         embedding_func=MagicMock(),
     )
+    return initialized_mock(store)
 
 
 def _make_vector_storage():
@@ -45,21 +47,23 @@ def _make_vector_storage():
 
     mock_embed = MagicMock()
     mock_embed.embedding_dim = 128
-    return MemgraphVectorDBStorage(
+    store = MemgraphVectorDBStorage(
         namespace="entities",
         global_config={},
         embedding_func=mock_embed,
     )
+    return initialized_mock(store)
 
 
 def _make_docstatus_storage():
     from lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
 
-    return MemgraphDocStatusStorage(
+    store = MemgraphDocStatusStorage(
         namespace="docstatus",
         global_config={},
         embedding_func=MagicMock(),
     )
+    return initialized_mock(store)
 
 
 class TestKVDeleteSetCoercion:

@@ -7,6 +7,19 @@ import os
 import pytest
 
 
+def initialized_mock(storage):
+    """Model an already verified store in tests that mock all database I/O.
+
+    Identity/bootstrap itself is exercised without this helper in
+    test_storage_identity.py. Never use it for a real-server fixture.
+    """
+    from lightrag_memgraph._identity import initialization_context, mark_identity_ready
+
+    kind = getattr(storage, "_storage_kind", "graph")
+    mark_identity_ready(storage, kind, initialization_context(storage, kind))
+    return storage
+
+
 def pytest_addoption(parser):
     parser.addoption(
         "--run-scale",

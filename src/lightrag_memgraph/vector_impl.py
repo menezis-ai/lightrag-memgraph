@@ -4,16 +4,16 @@ Vector Storage backend using Memgraph native vector search.
 Requires: Memgraph >= 3.2 with the vector_search module.
 
 Each vector entry is a Cypher node:
-  Label: :Vec_{workspace}_{namespace}
+  Label: :LRMG2_VECTOR_w{len(workspace)}_{workspace}_n{len(namespace)}_{namespace}
   Properties: id, embedding (list<float>), content, + meta_fields
 
 Vector index:
-  CREATE VECTOR INDEX vec_{workspace}_{namespace}
-  ON :Vec_{workspace}_{namespace}(embedding)
+  CREATE VECTOR INDEX LRMG2_VECTOR_INDEX_w{len(workspace)}_{workspace}_n{len(namespace)}_{namespace}
+  ON :LRMG2_VECTOR_w{len(workspace)}_{workspace}_n{len(namespace)}_{namespace}(embedding)
   WITH CONFIG {"dimension": N, "capacity": VECTOR_INDEX_CAPACITY, "metric": "cos"}
 
 Query:
-  CALL vector_search.search("vec_...", $top_k, $embedding)
+  CALL vector_search.search("LRMG2_VECTOR_INDEX_...", $top_k, $embedding)
   YIELD node, similarity
 """
 
@@ -22,7 +22,7 @@ import json
 import math
 from dataclasses import dataclass
 from numbers import Real
-from typing import Any
+from typing import Any, ClassVar
 
 from lightrag.base import BaseVectorStorage
 from lightrag.constants import (
@@ -40,6 +40,17 @@ except ImportError:  # Supported 1.4 backends use the literal priority 5.
 from . import _pool
 from ._constants import VECTOR_INDEX_CAPACITY, resolve_workspace, validate_identifier
 from .capabilities import inspect_memgraph
+from ._identity import (
+    StorageIdentityMixin,
+    initialization_context,
+    initialization_session,
+    initialize_identity,
+    invalidate_identity,
+    mark_identity_ready,
+    require_identity,
+    storage_label,
+    storage_index_name,
+)
 
 
 async def _gather_cancel_on_error(*calls):
@@ -55,7 +66,9 @@ async def _gather_cancel_on_error(*calls):
 
 
 @dataclass
-class MemgraphVectorDBStorage(BaseVectorStorage):
+class MemgraphVectorDBStorage(StorageIdentityMixin, BaseVectorStorage):
+    _storage_kind: ClassVar[str] = "vector"
+
     def __init__(
         self,
         namespace,
@@ -187,13 +200,13 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         )
 
     def _label(self) -> str:
-        return f"Vec_{self.workspace}_{self.namespace}"
+        return storage_label(self._storage_kind, self.workspace, self.namespace)
 
     def _index_name(self) -> str:
-        return f"vec_{self.workspace}_{self.namespace}"
+        return storage_index_name("vector", self.workspace, self.namespace)
 
     def _text_index_name(self) -> str:
-        return f"text_{self.workspace}_{self.namespace}"
+        return storage_index_name("text", self.workspace, self.namespace)
 
     async def _create_vector_index(self, session=None) -> None:
         """Recreate a missing index using this namespace's validated options."""
@@ -216,16 +229,19 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         if session is not None:
             await self._create_index(session, query)
         else:
-            async with _pool.get_session() as write_session:
+            async with self._write_session() as write_session:
                 await self._create_index(write_session, query)
 
     async def initialize(self):
+        invalidate_identity(self)
+        context = initialization_context(self, self._storage_kind)
         label = self._label()
         index_name = self._index_name()
         dim = self.embedding_func.embedding_dim
 
         self._text_index_ready = False
-        async with _pool.get_session() as session:
+        async with initialization_session() as session:
+            await initialize_identity(self, self._storage_kind, session)
             self.capabilities = await inspect_memgraph(session)
             if not self.capabilities.vector_search:
                 raise RuntimeError("Memgraph requires the vector_search.search module")
@@ -286,6 +302,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                         "Use a new namespace or rebuild the text index explicitly."
                     )
                 self._text_index_ready = True
+        mark_identity_ready(self, self._storage_kind, context)
         logger.info(
             "[MemgraphVec:%s] Memgraph %s, index=%s, dim=%d, text=%s",
             self.workspace,
@@ -338,7 +355,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                 )
 
     async def finalize(self):
-        pass  # Shared driver; closed globally via _pool.close_driver()
+        invalidate_identity(self)
 
     async def index_done_callback(self):
         pass  # Memgraph persists automatically, no flush needed
@@ -464,7 +481,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             query_embedding = await self._embed_query(query)
 
         index_name = self._index_name()
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             capabilities = getattr(self, "capabilities", None)
             if capabilities and capabilities.version_tuple < (3, 4, 0):
                 # Early native vector modules can crash on an empty index.
@@ -602,7 +619,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         has_score = self.capabilities.returns_score(procedure)
         output = "node, score" if has_score else "node"
         score = "score" if has_score else "1.0 AS score"
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"CALL {procedure}({arguments}) YIELD {output} "
                 f"WITH id(node) AS match_id, {score} "
@@ -732,7 +749,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             for eid, item in data.items()
         ]
         async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
+            async with self._write_session() as session:
                 result = await session.run(
                     f"""
                     UNWIND $entries AS e
@@ -755,7 +772,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         # index entry cleanly; the DETACH DELETE then removes the orphan.
         label = self._label()
         async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
+            async with self._write_session() as session:
                 result = await session.run(
                     f"""
                     MATCH (n:`{label}`) WHERE n.entity_name = $name
@@ -771,7 +788,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         # Same Memgraph 3.10 vector-index hygiene as delete_entity above.
         label = self._label()
         async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
+            async with self._write_session() as session:
                 result = await session.run(
                     f"""
                     MATCH (n:`{label}`)
@@ -786,7 +803,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
 
     async def get_by_id(self, id: str) -> dict[str, Any] | None:
         label = self._label()
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"MATCH (n:`{label}` {{id: $id}}) RETURN properties(n) AS props, n.embedding AS embedding",
                 id=id,
@@ -802,7 +819,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
 
     async def get_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
         label = self._label()
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"""
                 UNWIND $ids AS target_id
@@ -824,7 +841,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         # Same Memgraph 3.10 vector-index hygiene as delete_entity above.
         label = self._label()
         async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
+            async with self._write_session() as session:
                 result = await session.run(
                     f"""
                     UNWIND $ids AS target_id
@@ -839,7 +856,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
 
     async def get_vectors_by_ids(self, ids: list[str]) -> dict[str, list[float]]:
         label = self._label()
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"""
                 UNWIND $ids AS target_id
@@ -856,10 +873,11 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             return out
 
     async def drop(self) -> dict[str, str]:
+        require_identity(self, self._storage_kind)
         label = self._label()
         try:
             async with _pool.acquire_write_slot():
-                async with _pool.get_session() as session:
+                async with self._write_session() as session:
                     text_index = await self._get_text_index(session)
                     result = await session.run("SHOW VECTOR INDEX INFO")
                     vector_indexes = [dict(record) async for record in result]

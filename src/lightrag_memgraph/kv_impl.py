@@ -2,10 +2,10 @@
 KV Storage backend using Memgraph nodes as key-value pairs.
 
 Each KV entry is a Cypher node:
-  Label: :KV_{workspace}_{namespace}
+  Label: :LRMG2_KV_w{len(workspace)}_{workspace}_n{len(namespace)}_{namespace}
   Properties: id (key), data (JSON string), __created_at, __updated_at
 
-Index: CREATE INDEX ON :KV_{workspace}_{namespace}(id)
+Index: CREATE INDEX ON :LRMG2_KV_w{len(workspace)}_{workspace}_n{len(namespace)}_{namespace}(id)
 """
 
 import json
@@ -18,11 +18,21 @@ from lightrag.utils import logger
 
 from . import _pool
 from ._constants import resolve_workspace, validate_identifier
+from ._identity import (
+    StorageIdentityMixin,
+    initialization_context,
+    initialization_session,
+    initialize_identity,
+    invalidate_identity,
+    mark_identity_ready,
+    storage_label,
+)
 
 
 @dataclass
-class MemgraphKVStorage(BaseKVStorage):
+class MemgraphKVStorage(StorageIdentityMixin, BaseKVStorage):
     supports_strict_point_reads: ClassVar[bool] = True
+    _storage_kind: ClassVar[str] = "kv"
 
     def __init__(
         self, namespace, global_config, embedding_func, *, workspace=None, **kwargs
@@ -38,9 +48,11 @@ class MemgraphKVStorage(BaseKVStorage):
 
     def _label(self) -> str:
         """Cypher label unique to this workspace + namespace."""
-        return f"KV_{self.workspace}_{self.namespace}"
+        return storage_label(self._storage_kind, self.workspace, self.namespace)
 
     async def initialize(self):
+        invalidate_identity(self)
+        context = initialization_context(self, self._storage_kind)
         label = self._label()
         _, database = await _pool.get_driver()
         logger.info(
@@ -49,7 +61,8 @@ class MemgraphKVStorage(BaseKVStorage):
             database,
             label,
         )
-        async with _pool.get_session() as session:
+        async with initialization_session() as session:
+            await initialize_identity(self, self._storage_kind, session)
             try:
                 result = await session.run(f"CREATE INDEX ON :`{label}`(id)")
                 await result.consume()
@@ -66,8 +79,10 @@ class MemgraphKVStorage(BaseKVStorage):
                         "[MemgraphKV:%s] Index creation failed: %s", self.workspace, e
                     )
 
+        mark_identity_ready(self, self._storage_kind, context)
+
     async def finalize(self):
-        pass  # shared driver, closed globally
+        invalidate_identity(self)
 
     async def index_done_callback(self):
         pass  # Memgraph persists automatically
@@ -77,7 +92,7 @@ class MemgraphKVStorage(BaseKVStorage):
 
     async def _get_by_id(self, id: str, *, strict: bool) -> dict[str, Any] | None:
         label = self._label()
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"MATCH (n:`{label}` {{id: $id}}) RETURN n.data AS data",
                 id=id,
@@ -96,7 +111,7 @@ class MemgraphKVStorage(BaseKVStorage):
 
     async def get_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
         label = self._label()
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"""
                 UNWIND $ids AS target_id
@@ -120,7 +135,7 @@ class MemgraphKVStorage(BaseKVStorage):
     async def filter_keys(self, keys: set[str]) -> set[str]:
         """Return keys that do NOT exist in storage."""
         label = self._label()
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"""
                 UNWIND $keys AS k
@@ -148,7 +163,7 @@ class MemgraphKVStorage(BaseKVStorage):
             for k, v in data.items()
         ]
         async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
+            async with self._write_session() as session:
                 result = await session.run(
                     f"""
                     UNWIND $entries AS e
@@ -163,7 +178,7 @@ class MemgraphKVStorage(BaseKVStorage):
     async def delete(self, ids: list[str]) -> None:
         label = self._label()
         async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
+            async with self._write_session() as session:
                 result = await session.run(
                     f"""
                     UNWIND $ids AS target_id
@@ -176,7 +191,7 @@ class MemgraphKVStorage(BaseKVStorage):
 
     async def is_empty(self) -> bool:
         label = self._label()
-        async with _pool.get_read_session() as session:
+        async with self._read_session() as session:
             result = await session.run(
                 f"MATCH (n:`{label}`) RETURN count(n) AS cnt LIMIT 1"
             )
@@ -187,7 +202,7 @@ class MemgraphKVStorage(BaseKVStorage):
     async def drop(self) -> dict[str, str]:
         label = self._label()
         async with _pool.acquire_write_slot():
-            async with _pool.get_session() as session:
+            async with self._write_session() as session:
                 result = await session.run(f"MATCH (n:`{label}`) DETACH DELETE n")
                 await result.consume()
         return {"status": "success", "message": f"KV namespace {label} dropped"}

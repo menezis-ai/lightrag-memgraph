@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from tests.conftest import initialized_mock
 
 import lightrag_memgraph._pool as pool
 from lightrag_memgraph._constants import DEFAULT_WRITE_CONCURRENCY
@@ -141,7 +142,7 @@ class TestKVWriteSlotIntegration:
         store.workspace = "test"
         store.global_config = {}
         store.embedding_func = None
-        return store
+        return initialized_mock(store)
 
     async def test_upsert_acquires_write_slot(self, kv_store):
         entered = []
@@ -221,7 +222,7 @@ class TestDocStatusWriteSlotIntegration:
         store.workspace = "test"
         store.global_config = {}
         store.embedding_func = None
-        return store
+        return initialized_mock(store)
 
     async def test_upsert_acquires_write_slot(self, doc_store):
         entered = []
@@ -271,7 +272,7 @@ class TestVectorWriteSlotIntegration:
         store.embedding_func = None
         store.meta_fields = set()
         store.cosine_better_than_threshold = 0.2
-        return store
+        return initialized_mock(store)
 
     async def test_upsert_acquires_write_slot(self, vec_store):
         entered = []
