@@ -16,6 +16,8 @@ retrieval are optional. Your application supplies the LLM and embedding models.
 
 [Quick start](#installation-and-quick-start) ·
 [Storage backends](#storage-backends-and-architecture) ·
+[Runnable tutorial](docs/tutorial.md) ·
+[Measured benchmarks](docs/benchmarks.md) ·
 [Supported versions](#supported-lightrag-and-memgraph-versions) ·
 [Releases](https://github.com/menezis-ai/lightrag-memgraph/releases) ·
 [Report an issue](https://github.com/menezis-ai/lightrag-memgraph/issues)
@@ -201,9 +203,11 @@ descriptions and source IDs. The real-server concurrency regressions in
 overlapping document merges for both entities and relationships in every CI
 dependency profile.
 
-The current release is **0.6.1**; see [CHANGELOG.md](CHANGELOG.md). Registration
-keeps the package version visible through LightRAG's `core_version`, with the
-suffix `+memgraph-0.6.1`.
+The latest published release is **0.6.1**. `main` carries the unreleased
+**0.6.2 candidate**; see
+[CHANGELOG.md](CHANGELOG.md) and the [upgrade notes](docs/migration-0.6.2.md).
+Registration keeps the build version visible through LightRAG's `core_version`,
+with the suffix `+memgraph-0.6.2` for this candidate.
 
 <a id="memgraph-capabilities-and-optional-retrieval-features"></a>
 
@@ -272,10 +276,15 @@ namespace label, embedding property, embedding dimension, cosine metric and any
 explicit scalar kind. A mismatch raises an actionable error without dropping
 data. Capacity/resizing options apply when creating an index; they do not resize
 an existing index. Changing embedding models or quantization requires an
-explicit index rebuild or a new namespace. Initialization errors propagate. A known exception during query-time recovery
-can turn a failed vector-index recreation into an empty result;
-[issue #23](https://github.com/menezis-ai/lightrag-memgraph/issues/23) tracks that
-error-reporting defect.
+explicit index rebuild or a new namespace. Initialization errors propagate.
+Query-time recovery recreates a missing vector index and retries once, reusing
+the query embedding. Failed recreation or a failed retry raises a `RuntimeError`
+containing the index name, chained from the original exception in `__cause__`.
+At the adapter level, vector and hybrid callers receive the failure rather than
+empty hits. On LightRAG 1.5.7, `aquery_llm()` reports `status="failure"`, while
+the legacy `aquery()` wrapper returns `None`. Older 1.4 query helpers may catch
+backend failures and return empty context. See the
+[migration notes](docs/migration-0.6.2.md#retrieval-behavior-changes).
 
 On an initialized `MemgraphVectorDBStorage`:
 
@@ -356,9 +365,9 @@ in Memgraph does not determine where model inference runs.
 
 Workspace scoping is not an authorization boundary. Review the
 [data integrity notes](docs/data-integrity.md) and open audit findings for
-[label collisions](https://github.com/menezis-ai/lightrag-memgraph/issues/21),
-[embedding-wrapper compatibility](https://github.com/menezis-ai/lightrag-memgraph/issues/22)
-and [vector-index error reporting](https://github.com/menezis-ai/lightrag-memgraph/issues/23).
+[label collisions](https://github.com/menezis-ai/lightrag-memgraph/issues/21).
+Embedding-wrapper compatibility (#22) and vector-index error reporting (#23)
+are corrected in the 0.6.2 candidate. Publication remains on hold for #21.
 The Community CI matrix does not qualify Enterprise authorization or HA failover.
 
 <a id="testing"></a>
@@ -441,6 +450,7 @@ pipeline follows [the ingestion validation procedure](docs/ingestion-validation.
 
 - [LightRAG and Memgraph compatibility, CI matrix and engine upgrades](docs/memgraph-compatibility.md)
 - [Storage integrity, workspace migration and deletion validation](docs/data-integrity.md)
+- [Embedding scheduling, large-upsert reproduction and error boundaries](docs/embedding-qualification.md)
 - [PDF ingestion responsiveness and deployment validation](docs/ingestion-validation.md)
 - [Package changelog](CHANGELOG.md) and [GitHub releases](https://github.com/menezis-ai/lightrag-memgraph/releases)
 - [Bug reports and feature requests](https://github.com/menezis-ai/lightrag-memgraph/issues)

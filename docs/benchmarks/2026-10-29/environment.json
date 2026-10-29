@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-10-28T23:35:46.205888+00:00",
+  "runtime": [
+    "Linux-7.2.12-orbstack-00394-gbecdd6130068-aarch64-with-glibc2.41",
+    "3.12.15"
+  ],
+  "server_image": "memgraph/memgraph-mage@sha256:2ad342a011fb463c43af821f72ca627eee2b63a39dc663f5928355a9fd01d20a",
+  "runner_image": "python@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1",
+  "architecture": "linux/arm64",
+  "limits_per_container": {
+    "memory_bytes": 2147483648,
+    "cpu_quota": 2
+  },
+  "topology": "shared network namespace, loopback Bolt",
+  "host_load_controlled": false,
+  "host_cpu_model": "unavailable",
+  "source_selection": "PYTHONPATH=/repo/src at b881ab071767a3fbb976563ff9d180e3a5dd4256; installed metadata 0.6.1"
+}

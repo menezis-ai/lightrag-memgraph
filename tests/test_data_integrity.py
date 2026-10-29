@@ -2,12 +2,14 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from importlib.metadata import version
 import inspect
 import os
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from packaging.version import Version
 from lightrag import LightRAG, QueryParam
 from lightrag.kg.memgraph_impl import MemgraphStorage
 from lightrag.kg.shared_storage import finalize_share_data, initialize_share_data
@@ -17,6 +19,44 @@ from tests.test_e2e import EMBEDDING_DIM, SAMPLE_DOC, _mock_embedding, _mock_llm
 from lightrag_memgraph import _pool, register
 from lightrag_memgraph.docstatus_impl import MemgraphDocStatusStorage
 from lightrag_memgraph.kv_impl import MemgraphKVStorage
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    Version(version("lightrag-hku")) < Version("1.5.7"),
+    reason="Public query error propagation is qualified on LightRAG 1.5.7",
+)
+async def test_naive_query_reports_failure_and_legacy_wrapper_returns_none(
+    tenants, monkeypatch
+):
+    from neo4j.exceptions import Forbidden
+
+    rag = tenants[0]
+    await rag.ainsert(
+        SAMPLE_DOC, ids=["recovery-document"], file_paths=["recovery.txt"]
+    )
+    index = rag.chunks_vdb._index_name()
+    async with _pool.get_session() as session:
+        await (await session.run(f"DROP VECTOR INDEX `{index}`")).consume()
+    failure = Forbidden("CREATE INDEX denied")
+    monkeypatch.setattr(
+        rag.chunks_vdb, "_create_vector_index", AsyncMock(side_effect=failure)
+    )
+    with pytest.raises(
+        RuntimeError, match=f"Vector index {index} recovery failed"
+    ) as caught:
+        await rag.chunks_vdb.query("What is Paris?", top_k=5)
+    assert caught.value.__cause__ is failure
+    response = await rag.aquery_llm(
+        "What is Paris?", param=QueryParam(mode="naive", top_k=5)
+    )
+    assert response["status"] == "failure"
+    assert f"Vector index {index} recovery failed" in response["message"]
+    assert response["llm_response"]["content"] is None
+    assert (
+        await rag.aquery("What is Paris?", param=QueryParam(mode="naive", top_k=5))
+        is None
+    )
 
 
 @pytest.mark.parametrize("fallback", [None, "environment_workspace"])

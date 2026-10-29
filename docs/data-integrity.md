@@ -35,6 +35,28 @@ label or document ID: IDs may already have collided. Use original source manifes
 and backups to determine ownership. Migration or re-ingestion requires a separate,
 reviewed plan; changing constructor priority does not repair historical collisions.
 
+## Label collision requalification
+
+On 2026-10-29, the actual storage classes on main commit
+`22f1057e02cd21acc2cd0841abdd5ade1de74196` were requalified against Memgraph
+MAGE 3.14.0, LightRAG 1.5.7 and Neo4j driver 6.4.1 in a disposable database.
+The current retrieval fixes do not change this label encoding. Both failure
+paths from [issue #21](https://github.com/menezis-ai/lightrag-memgraph/issues/21)
+remain present:
+
+- KV `(workspace="a", namespace="b_c")` and `(workspace="a_b", namespace="c")`
+  use the same label. A record written by the first can be read and overwritten
+  by the second. The qualification used a unique random prefix on these names.
+- A graph workspace equal to `KV_<workspace>_text_chunks` uses the KV store's
+  label. The graph's public `drop()` deleted a KV record from that label.
+
+The issue has been reopened with the real-server reproduction. Existing
+two-tenant tests cover distinct non-colliding names; they do not establish
+isolation for all accepted identifiers. Workspace scoping is not authorization.
+Use separately controlled databases for independent tenants. An eventual fix
+must define an unambiguous storage identity and an explicit migration or
+fail-closed strategy for existing labels; silently renaming them can hide data.
+
 ## Document deletion
 
 Document status stores `chunks_list` and `metadata` as JSON properties. All raw

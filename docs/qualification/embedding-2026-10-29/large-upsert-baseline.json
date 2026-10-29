@@ -1,0 +1,20 @@
+{
+  "label": "baseline",
+  "lightrag": "1.4.9",
+  "driver": "5.28.8",
+  "chunks": 201,
+  "llm_timeout": 30,
+  "execution_timeout": 60,
+  "provider_seconds_per_text": 0.31,
+  "write_concurrency": 1,
+  "kv_blocked_during_embedding": true,
+  "kv_probe_seconds": 1.0011402899999666,
+  "vector_upsert": "error",
+  "error_type": "TimeoutError",
+  "error": "limit_async: Worker execution timeout after 60s",
+  "vector_elapsed_seconds": 60.003297055000075,
+  "batch_sizes": [
+    201
+  ],
+  "persisted_vectors": 0
+}

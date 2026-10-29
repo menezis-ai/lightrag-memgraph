@@ -344,9 +344,13 @@ class TestBackendReadPoolIntegration:
             session.run = AsyncMock(return_value=result)
             yield session
 
-        mock_embed = AsyncMock()
-        mock_embed.func = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
-        vec_store.embedding_func = mock_embed
+        import numpy as np
+        from lightrag.utils import EmbeddingFunc
+
+        vec_store.embedding_func = EmbeddingFunc(
+            embedding_dim=3,
+            func=AsyncMock(return_value=np.array([[0.1, 0.2, 0.3]])),
+        )
 
         with patch.object(pool, "get_read_session", mock_read):
             await vec_store.query("test query", top_k=5)

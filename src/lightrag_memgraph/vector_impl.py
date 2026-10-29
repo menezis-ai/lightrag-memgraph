@@ -25,12 +25,33 @@ from numbers import Real
 from typing import Any
 
 from lightrag.base import BaseVectorStorage
+from lightrag.constants import (
+    DEFAULT_EMBEDDING_BATCH_NUM,
+    DEFAULT_EMBEDDING_FUNC_MAX_ASYNC,
+)
 from lightrag.utils import logger
 from neo4j.exceptions import ClientError
+
+try:
+    from lightrag.constants import DEFAULT_QUERY_PRIORITY
+except ImportError:  # Supported 1.4 backends use the literal priority 5.
+    DEFAULT_QUERY_PRIORITY = 5
 
 from . import _pool
 from ._constants import VECTOR_INDEX_CAPACITY, resolve_workspace, validate_identifier
 from .capabilities import inspect_memgraph
+
+
+async def _gather_cancel_on_error(*calls):
+    """Cancel and drain sibling work before returning a failure to the caller."""
+    tasks = [asyncio.create_task(call) for call in calls]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
 
 @dataclass
@@ -57,6 +78,18 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         # This helper was absent from early LightRAG 1.4 releases.
         if self.embedding_func is None:
             raise ValueError("embedding_func is required for vector storage")
+        self._embedding_batch_num = self.global_config.get(
+            "embedding_batch_num", DEFAULT_EMBEDDING_BATCH_NUM
+        )
+        self._embedding_max_async = self.global_config.get(
+            "embedding_func_max_async", DEFAULT_EMBEDDING_FUNC_MAX_ASYNC
+        )
+        for key, value in (
+            ("embedding_batch_num", self._embedding_batch_num),
+            ("embedding_func_max_async", self._embedding_max_async),
+        ):
+            if type(value) is not int or value < 1:
+                raise ValueError(f"{key} must be a positive integer, got {value!r}")
 
         # Extract cosine_better_than_threshold from global_config
         # (same pattern as all other LightRAG vector backends)
@@ -332,9 +365,61 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
                 entry[field_name] = self._parse_meta_field(props.get(field_name))
         return entry
 
+    async def _embed_texts(
+        self, texts: list[str], *, context: str, priority: int | None = None
+    ) -> list[list[float]]:
+        # Call the wrapper: it injects dimensions/token limits and owns the
+        # concurrency queue. Older wrappers forward kwargs verbatim, so pass
+        # context only when advertised. The queue consumes _priority.
+        kwargs = (
+            {"context": context}
+            if getattr(self.embedding_func, "supports_asymmetric", False)
+            else {}
+        )
+        if priority is not None:
+            kwargs["_priority"] = priority
+        result = await self.embedding_func(texts, **kwargs)
+        return self._validate_embeddings(
+            result, count=len(texts), dimension=self.embedding_func.embedding_dim
+        )
+
+    @staticmethod
+    def _validate_embeddings(
+        result: Any, *, count: int, dimension: int
+    ) -> list[list[float]]:
+        rows = result.tolist() if hasattr(result, "tolist") else result
+        try:
+            if len(rows) != count:
+                raise ValueError(
+                    f"Embedding provider returned {len(rows)} vectors for {count} texts"
+                )
+            vectors = [list(row) for row in rows]
+        except TypeError as exc:
+            raise ValueError(
+                f"Embedding provider must return a matrix of vectors, got {type(rows).__name__}"
+            ) from exc
+        for row, vector in enumerate(vectors):
+            if len(vector) != dimension:
+                raise ValueError(
+                    f"Embedding vector {row} has dimension {len(vector)}, expected {dimension}"
+                )
+            for column, value in enumerate(vector):
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, Real)
+                    or not math.isfinite(value)
+                ):
+                    raise ValueError(
+                        f"Embedding vector {row} coordinate {column} must be a finite number; got {value!r}"
+                    )
+        return [[float(value) for value in vector] for vector in vectors]
+
     async def _embed_query(self, query: str) -> list[float]:
-        embedding = (await self.embedding_func.func([query]))[0]
-        return embedding.tolist() if hasattr(embedding, "tolist") else list(embedding)
+        return (
+            await self._embed_texts(
+                [query], context="query", priority=DEFAULT_QUERY_PRIORITY
+            )
+        )[0]
 
     async def query(
         self,
@@ -364,10 +449,11 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             )
             try:
                 await self._create_vector_index()
-            except Exception as create_error:
-                logger.error("Vector index recreation failed: %s", create_error)
-                return []
-            return await self._query_vector_once(query, top_k, query_embedding)
+                return await self._query_vector_once(query, top_k, query_embedding)
+            except Exception as recovery_error:
+                raise RuntimeError(
+                    f"Vector index {self._index_name()} recovery failed"
+                ) from recovery_error
 
     async def _query_vector_once(
         self, query: str, top_k: int, query_embedding=None
@@ -556,7 +642,7 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
             return await self._query_vector(query, top_k, query_embedding)
         if query_embedding is None:
             query_embedding = await self._embed_query(query)
-        vector_hits, text_hits = await asyncio.gather(
+        vector_hits, text_hits = await _gather_cancel_on_error(
             self._query_vector(query, top_k * 4, query_embedding),
             self.query_text(query, top_k * 4),
         )
@@ -602,15 +688,20 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         if not needs_embed:
             return {}
         contents = [data[eid]["content"] for eid in needs_embed]
-        emb_results = await self.embedding_func.func(contents)
-        return {
-            eid: (
-                emb_results[i].tolist()
-                if hasattr(emb_results[i], "tolist")
-                else list(emb_results[i])
+        batch_size = self._embedding_batch_num
+        window_size = batch_size * self._embedding_max_async
+        emb_results = []
+        for start in range(0, len(contents), window_size):
+            batches = await _gather_cancel_on_error(
+                *(
+                    self._embed_texts(contents[i : i + batch_size], context="document")
+                    for i in range(
+                        start, min(start + window_size, len(contents)), batch_size
+                    )
+                )
             )
-            for i, eid in enumerate(needs_embed)
-        }
+            emb_results.extend(vector for batch in batches for vector in batch)
+        return dict(zip(needs_embed, emb_results))
 
     @staticmethod
     def _build_entry(eid: str, item: dict, embedding: list[float] | None) -> dict:
@@ -629,20 +720,18 @@ class MemgraphVectorDBStorage(BaseVectorStorage):
         if not data:
             return
         label = self._label()
+        computed = await self._compute_missing_embeddings(data)
+        entries = [
+            self._build_entry(
+                eid,
+                item,
+                item["embedding"]
+                if item.get("embedding") is not None
+                else computed.get(eid),
+            )
+            for eid, item in data.items()
+        ]
         async with _pool.acquire_write_slot():
-            computed = await self._compute_missing_embeddings(data)
-            entries = [
-                self._build_entry(
-                    eid,
-                    item,
-                    (
-                        item["embedding"]
-                        if item.get("embedding") is not None
-                        else computed.get(eid)
-                    ),
-                )
-                for eid, item in data.items()
-            ]
             async with _pool.get_session() as session:
                 result = await session.run(
                     f"""
