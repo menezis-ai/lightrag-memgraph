@@ -55,7 +55,7 @@ retrieval are optional. Your application supplies the LLM and embedding models.
 ### Install the Python package
 
 ```bash
-pip install "git+https://github.com/menezis-ai/lightrag-memgraph.git"
+pip install "git+https://github.com/menezis-ai/lightrag-memgraph.git@v0.7.0"
 ```
 
 The distribution name is `lightrag-memgraph`; the Python import is
@@ -213,11 +213,10 @@ descriptions and source IDs. The real-server concurrency regressions in
 overlapping document merges for both entities and relationships in every CI
 dependency profile.
 
-The latest published release is **0.6.1**. `main` carries the unreleased
-**0.7.0 candidate**; see
-[CHANGELOG.md](CHANGELOG.md) and the [upgrade notes](docs/migration-0.7.0.md).
-Registration keeps the build version visible through LightRAG's `core_version`,
-with the suffix `+memgraph-0.7.0` for this candidate.
+The latest release is [**0.7.0**](https://github.com/menezis-ai/lightrag-memgraph/releases/tag/v0.7.0).
+See [CHANGELOG.md](CHANGELOG.md) and the [upgrade notes](docs/migration-0.7.0.md)
+before upgrading an existing database. Registration keeps the build version
+visible through LightRAG's `core_version`, with the suffix `+memgraph-0.7.0`.
 
 <a id="memgraph-capabilities-and-optional-retrieval-features"></a>
 
@@ -375,7 +374,7 @@ in Memgraph does not determine where model inference runs.
 
 ### What should I check before a multi-tenant or production deployment?
 
-Workspace scoping does not enforce authorization. The 0.7 candidate addresses
+Workspace scoping does not enforce authorization. Version 0.7 addresses
 [label collisions](https://github.com/menezis-ai/lightrag-memgraph/issues/21) with
 versioned identities, ownership checks and refusal of ambiguous legacy data.
 Read the [migration guide](docs/migration-0.7.0.md) before upgrading and retain

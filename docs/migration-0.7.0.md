@@ -1,7 +1,7 @@
 # Upgrade to lightrag-memgraph 0.7
 
-0.7.0 is an unreleased candidate that supersedes the unpublished 0.6.2
-preparation. The published 0.6.1 format has ambiguous storage identities. This
+0.7.0 supersedes the unpublished 0.6.2 preparation. The 0.6.1 persistence
+format has ambiguous storage identities. This
 upgrade changes physical labels and index names and refuses unsafe startup.
 
 ## New identity and ownership contract
@@ -54,7 +54,7 @@ is renamed, rewritten, dropped or automatically attributed to a tenant.
    exists. Install the reviewed 0.7 wheel or Git revision in a clean environment:
 
    ```bash
-   pip install "git+https://github.com/menezis-ai/lightrag-memgraph.git"
+   pip install "git+https://github.com/menezis-ai/lightrag-memgraph.git@v0.7.0"
    ```
 
    The same-named PyPI project is a separate integration. Use
@@ -143,4 +143,3 @@ return empty context; the adapter's propagation does not change that upstream
 behavior. Applications retaining those versions must qualify their own query/
 error path. Do not interpret an empty upstream response as proof of a healthy
 backend.
-

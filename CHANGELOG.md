@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.7.0 (unreleased candidate)
+## 0.7.0 (2026-10-30)
 
-This candidate supersedes the unpublished 0.6.2 preparation. Physical storage
+0.7.0 supersedes the unpublished 0.6.2 preparation. Physical storage
 identities change; follow the [upgrade guide](docs/migration-0.7.0.md).
 
 - Encode storage kind, workspace and namespace with versioned length framing.
@@ -20,7 +20,6 @@ identities change; follow the [upgrade guide](docs/migration-0.7.0.md).
   and an explicit backup/re-ingestion migration path; no automatic in-place
   adoption or destructive migration. Qualify identical-ID isolation, refusal
   without legacy data/index mutation and concurrent startup on real Memgraph.
-
 - Call LightRAG's `EmbeddingFunc` wrapper for both query and document vectors,
   preserving dimension/token injection, concurrency limiting and asymmetric
   query/document context when supported upstream. Schedule query embeddings
@@ -41,8 +40,8 @@ identities change; follow the [upgrade guide](docs/migration-0.7.0.md).
 - Use `lightrag-memgraph` as the distribution and project name and
   `lightrag_memgraph` as the Python namespace. Update imports, LightRAG storage
   registry paths, logging, tests and CI to the new namespace. The import rename
-  itself preserves stored IDs; 0.7 physical identities require migration. Update application imports and
-  restart running processes when upgrading. Install this repository from GitHub;
+  itself preserves stored IDs; 0.7 physical identities require migration. Update
+  application imports and restart running processes when upgrading. Install this repository from GitHub;
   the same-named PyPI distribution is a separate project.
 - Add a runnable fixture/live-provider lifecycle tutorial, requalify the open
   isolation finding on Memgraph 3.14.0, and publish measured scale results with
