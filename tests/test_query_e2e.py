@@ -14,25 +14,24 @@ import os
 import numpy as np
 import pytest
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("MEMGRAPH_URI"),
-    reason="MEMGRAPH_URI not set",
-)
-
 import lightrag_memgraph
 import lightrag_memgraph._pool as _pool
-
-lightrag_memgraph.register()
 
 from lightrag import operate
 from lightrag.base import QueryParam
 from lightrag.kg.memgraph_impl import MemgraphStorage
 from lightrag.kg.shared_storage import initialize_share_data
-from lightrag.utils import EmbeddingFunc
+from lightrag.utils import EmbeddingFunc, priority_limit_async_func_call
 
 from lightrag_memgraph.kv_impl import MemgraphKVStorage
 from lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
 
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("MEMGRAPH_URI"),
+    reason="MEMGRAPH_URI not set",
+)
+
+lightrag_memgraph.register()
 initialize_share_data(workers=1)
 
 EMBEDDING_DIM = 384
@@ -66,15 +65,17 @@ async def _mock_embedding(texts: list[str]) -> np.ndarray:
     return np.array([QUERY_EMBEDDING.tolist()] * len(texts))
 
 
-embedding_func = EmbeddingFunc(
-    embedding_dim=EMBEDDING_DIM,
-    max_token_size=8192,
-    func=_mock_embedding,
-)
+@pytest.fixture
+async def embedding_func():
+    queued = priority_limit_async_func_call(8)(_mock_embedding)
+    yield EmbeddingFunc(
+        embedding_dim=EMBEDDING_DIM, max_token_size=8192, func=queued
+    )
+    await queued.shutdown()
 
 
 @pytest.fixture
-async def seeded_stores():
+async def seeded_stores(embedding_func):
     """Set up graph + vector stores with test data, shared across all tests."""
 
     # Ensure our workspace is active (not polluted by other test modules)
@@ -277,13 +278,13 @@ class TestGlobalMode:
     async def test_global_returns_relations(self, seeded_stores):
         result = await _do_search("global", seeded_stores)
         assert len(result["final_relations"]) > 0, (
-            f"Global mode returned 0 relations. VDB query may be empty."
+            "Global mode returned 0 relations. VDB query may be empty."
         )
 
     async def test_global_returns_entities(self, seeded_stores):
         result = await _do_search("global", seeded_stores)
         assert len(result["final_entities"]) > 0, (
-            f"Global mode returned 0 entities from relationship traversal."
+            "Global mode returned 0 entities from relationship traversal."
         )
 
 
