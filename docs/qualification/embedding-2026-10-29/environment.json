@@ -1,0 +1,23 @@
+{
+  "source_refs": {
+    "baseline": "86eda9bae372db10fdd9cc0ed465aec5b325418a",
+    "fixed": "d4aab4dbf7c54102d685220b72eb6c222f300d27"
+  },
+  "vector_impl_sha256": {
+    "baseline": "dbca26d2cd0707e3db2dcd4cd570b1e7308f22fc741b35102a21572b926f11a4",
+    "fixed": "689269450cc744800cd8c35b45636b83255554d42485c7668224b87d429b856d"
+  },
+  "probe_sha256": "47a060674c2e5b5c6e26103cf327980cb9d0d9770cea7fd8e529de3ce15e2edd",
+  "architecture": "linux/arm64",
+  "python": "3.12.15",
+  "lightrag": "1.4.9",
+  "neo4j": "5.28.8",
+  "server_image": "memgraph/memgraph-mage@sha256:2ad342a011fb463c43af821f72ca627eee2b63a39dc663f5928355a9fd01d20a",
+  "runner_image": "python@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1",
+  "limits_per_container": {
+    "cpu_quota": 2,
+    "memory_bytes": 2147483648
+  },
+  "topology": "shared network namespace, loopback Bolt",
+  "provider": "local sleeping fixture, not a model service"
+}

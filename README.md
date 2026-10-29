@@ -203,7 +203,8 @@ descriptions and source IDs. The real-server concurrency regressions in
 overlapping document merges for both entities and relationships in every CI
 dependency profile.
 
-The latest published release is **0.6.1**. This branch prepares **0.6.2**; see
+The latest published release is **0.6.1**. `main` carries the unreleased
+**0.6.2 candidate**; see
 [CHANGELOG.md](CHANGELOG.md) and the [upgrade notes](docs/migration-0.6.2.md).
 Registration keeps the build version visible through LightRAG's `core_version`,
 with the suffix `+memgraph-0.6.2` for this candidate.
@@ -277,8 +278,13 @@ data. Capacity/resizing options apply when creating an index; they do not resize
 an existing index. Changing embedding models or quantization requires an
 explicit index rebuild or a new namespace. Initialization errors propagate.
 Query-time recovery recreates a missing vector index and retries once, reusing
-the query embedding. Failed recreation or a failed retry propagates to vector
-and hybrid callers; an empty result means the search completed without matches.
+the query embedding. Failed recreation or a failed retry raises a `RuntimeError`
+containing the index name, chained from the original exception in `__cause__`.
+At the adapter level, vector and hybrid callers receive the failure rather than
+empty hits. On LightRAG 1.5.7, `aquery_llm()` reports `status="failure"`, while
+the legacy `aquery()` wrapper returns `None`. Older 1.4 query helpers may catch
+backend failures and return empty context. See the
+[migration notes](docs/migration-0.6.2.md#retrieval-behavior-changes).
 
 On an initialized `MemgraphVectorDBStorage`:
 
@@ -444,6 +450,7 @@ pipeline follows [the ingestion validation procedure](docs/ingestion-validation.
 
 - [LightRAG and Memgraph compatibility, CI matrix and engine upgrades](docs/memgraph-compatibility.md)
 - [Storage integrity, workspace migration and deletion validation](docs/data-integrity.md)
+- [Embedding scheduling, large-upsert reproduction and error boundaries](docs/embedding-qualification.md)
 - [PDF ingestion responsiveness and deployment validation](docs/ingestion-validation.md)
 - [Package changelog](CHANGELOG.md) and [GitHub releases](https://github.com/menezis-ai/lightrag-memgraph/releases)
 - [Bug reports and feature requests](https://github.com/menezis-ai/lightrag-memgraph/issues)

@@ -7,6 +7,10 @@ the embedding/error-reporting fixes prepared for 0.6.2. Installed metadata at
 measurement time reported 0.6.1; `PYTHONPATH=/repo/src` selected that exact
 revision's source. No comparison with another adapter or server is claimed.
 
+These measurements remain a reference for that pinned revision. Subsequent PR
+review corrections have separate [embedding qualification evidence](embedding-qualification.md)
+and CI results; they do not change the provenance of this recorded run.
+
 ## Results
 
 All three existing maximum-latency budgets passed. Each row contains 24 calls

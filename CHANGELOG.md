@@ -7,11 +7,21 @@ Publication is held while P1 label collisions (#21) remain unresolved. See the
 
 - Call LightRAG's `EmbeddingFunc` wrapper for both query and document vectors,
   preserving dimension/token injection, concurrency limiting and asymmetric
-  query/document context when supported upstream. Reject invalid counts,
-  dimensions and non-finite coordinates before database writes (#22).
+  query/document context when supported upstream. Schedule query embeddings
+  ahead of waiting ingestion. Reject invalid counts, dimensions and non-finite
+  coordinates before database writes with diagnostic values (#22).
+- Respect `embedding_batch_num` (default 10) and bound outstanding preparation
+  batches by `embedding_func_max_async` (default 8). Prepare embeddings before
+  acquiring the shared write slot; failed/cancelled preparation never writes
+  partially prepared data (#25, #26).
 - Propagate vector-index recovery failures instead of returning an empty result.
   Vector and hybrid callers can distinguish a failed search from no matches;
-  a successful recovery still retries once and reuses the query embedding (#23).
+  a successful recovery still retries once and reuses the query embedding.
+  Failed recreation/retry raises `RuntimeError` with the index name and chained
+  cause, without a duplicate traceback. Cancel and await sibling hybrid searches
+  on error or caller cancellation. On LightRAG 1.5.7, `aquery_llm()` exposes a
+  failure status/message while legacy `aquery()` returns `None`; 1.4 query
+  helpers may still swallow backend errors (#23).
 - Use `lightrag-memgraph` as the distribution and project name and
   `lightrag_memgraph` as the Python namespace. Update imports, LightRAG storage
   registry paths, logging, tests and CI to the new namespace. Existing database
