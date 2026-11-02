@@ -33,10 +33,21 @@ def clear_post_index_hooks() -> None:
     _post_index_hooks.clear()
 
 
+def _hook_name(hook) -> str:
+    """Return a log label without trusting callback metadata or stringification."""
+    try:
+        name = getattr(hook, "__name__", None)
+        if type(name) is not str or not name:
+            name = type(hook).__name__
+        return name if type(name) is str else "<unknown>"
+    except Exception:
+        return "<unknown>"
+
+
 async def _run_post_index_hooks(lightrag_instance) -> None:
     """Execute every registered hook. Errors are logged, not raised."""
     for hook in _post_index_hooks:
         try:
             await hook(lightrag_instance)
         except Exception:
-            logger.exception("Post-index hook %s failed", hook.__name__)
+            logger.exception("Post-index hook %s failed", _hook_name(hook))
