@@ -4,6 +4,8 @@ No Memgraph required — LightRAG instance is mocked.
 """
 
 import asyncio
+import functools
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -103,6 +105,108 @@ class TestHookExecution:
         await _run_post_index_hooks(MagicMock())
 
         second_hook.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ("callback_kind", "expected_name"),
+        [("function", "bad_hook"), ("partial", "partial"), ("instance", "FailingHook")],
+    )
+    async def test_callback_failure_logs_original_cause_and_continues(
+        self, callback_kind, expected_name, caplog
+    ):
+        """Functions and nameless callbacks retain their error and do not stop later hooks."""
+        failure = RuntimeError("hook failure")
+        cause = ValueError("original cause")
+
+        async def bad_hook(inst, marker="audit"):
+            raise failure from cause
+
+        class FailingHook:
+            async def __call__(self, inst):
+                raise failure from cause
+
+        callbacks = {
+            "function": bad_hook,
+            "partial": functools.partial(bad_hook, marker="audit"),
+            "instance": FailingHook(),
+        }
+        healthy_hook = AsyncMock()
+        rag = MagicMock()
+        register_post_index_hook(callbacks[callback_kind])
+        register_post_index_hook(healthy_hook)
+
+        with caplog.at_level(logging.ERROR, logger="lightrag_memgraph"):
+            await _run_post_index_hooks(rag)
+
+        healthy_hook.assert_awaited_once_with(rag)
+        assert len(caplog.records) == 1
+        record = caplog.records[0]
+        assert record.getMessage() == f"Post-index hook {expected_name} failed"
+        assert record.exc_info[1] is failure
+        assert record.exc_info[1].__cause__ is cause
+        assert "ValueError: original cause" in caplog.text
+
+    @pytest.mark.parametrize(
+        "metadata", ["raises", "non_string", "empty", "str_subclass"]
+    )
+    async def test_unusable_callback_name_does_not_replace_hook_error(
+        self, metadata, caplog
+    ):
+        """Broken metadata and repr cannot escape the callback failure handler."""
+        failure = RuntimeError("hook failure")
+
+        class UnprintableName(str):
+            def __str__(self):
+                raise RuntimeError("callback name must not be stringified")
+
+        class BrokenNameHook:
+            @property
+            def __name__(self):
+                if metadata == "raises":
+                    raise LookupError("unreadable name")
+                if metadata == "str_subclass":
+                    return UnprintableName("untrusted callback name")
+                return self if metadata == "non_string" else ""
+
+            def __repr__(self):
+                raise AssertionError("callback repr must not be used")
+
+            async def __call__(self, inst):
+                raise failure
+
+        healthy_hook = AsyncMock()
+        register_post_index_hook(BrokenNameHook())
+        register_post_index_hook(healthy_hook)
+
+        with caplog.at_level(logging.ERROR, logger="lightrag_memgraph"):
+            await _run_post_index_hooks(MagicMock())
+
+        healthy_hook.assert_awaited_once()
+        assert len(caplog.records) == 1
+        record = caplog.records[0]
+        expected_name = "<unknown>" if metadata == "raises" else "BrokenNameHook"
+        assert record.getMessage() == f"Post-index hook {expected_name} failed"
+        assert record.exc_info[1] is failure
+
+    @pytest.mark.parametrize("error_type", [asyncio.CancelledError, KeyboardInterrupt])
+    async def test_base_exception_propagates_without_running_later_hooks(
+        self, error_type, caplog
+    ):
+        """Cancellation and process interruption remain outside failure isolation."""
+        failure = error_type("stop hooks")
+
+        async def interrupted_hook(inst):
+            raise failure
+
+        healthy_hook = AsyncMock()
+        register_post_index_hook(interrupted_hook)
+        register_post_index_hook(healthy_hook)
+
+        with pytest.raises(error_type) as raised:
+            await _run_post_index_hooks(MagicMock())
+
+        assert raised.value is failure
+        healthy_hook.assert_not_awaited()
+        assert caplog.records == []
 
     async def test_no_hooks_is_noop(self):
         """Empty hook list should not raise."""
