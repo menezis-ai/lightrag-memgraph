@@ -6,9 +6,11 @@ Verifies that register() patches all 5 batch methods on MemgraphStorage
 and that each returns the correct types from a single UNWIND query.
 """
 
+from inspect import unwrap
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from lightrag.kg.memgraph_impl import MemgraphStorage
 from tests.conftest import initialized_mock
 
 import lightrag_memgraph
@@ -421,15 +423,15 @@ class TestOperatePatches:
         lightrag_memgraph.register()
         import lightrag.operate as operate
 
-        # The patched version should NOT be the original
-        assert "fused" in operate._get_node_data.__name__
+        assert unwrap(operate._get_node_data) is not operate._get_node_data
 
     def test_find_edges_patched(self):
         _reset()
         lightrag_memgraph.register()
         import lightrag.operate as operate
 
-        assert "fused" in operate._find_most_related_edges_from_entities.__name__
+        find_edges = operate._find_most_related_edges_from_entities
+        assert unwrap(find_edges) is not find_edges
 
 
 class TestFusedGetNodeData:
@@ -452,7 +454,7 @@ class TestFusedGetNodeData:
         )
 
         # Mock graph storage with fused method
-        graph = AsyncMock()
+        graph = AsyncMock(spec=MemgraphStorage)
         graph.get_nodes_with_degrees_batch = AsyncMock(
             return_value=(
                 {
@@ -497,7 +499,7 @@ class TestFusedGetNodeData:
         entities_vdb.cosine_better_than_threshold = 0.2
         entities_vdb.query = AsyncMock(return_value=[])
 
-        graph = AsyncMock()
+        graph = AsyncMock(spec=MemgraphStorage)
         query_param = MagicMock()
         query_param.top_k = 10
 
@@ -569,7 +571,7 @@ class TestFusedGetNodeData:
             ]
         )
 
-        graph = AsyncMock()
+        graph = AsyncMock(spec=MemgraphStorage)
         graph.get_nodes_with_degrees_batch = AsyncMock(
             return_value=(
                 {"alice": {"description": "exists"}},  # ghost missing
@@ -599,7 +601,7 @@ class TestFusedFindEdges:
         lightrag_memgraph.register()
         import lightrag.operate as operate
 
-        graph = AsyncMock()
+        graph = AsyncMock(spec=MemgraphStorage)
         graph.get_nodes_edges_batch = AsyncMock(
             return_value={
                 "alice": [("alice", "bob"), ("alice", "carol")],
@@ -656,7 +658,7 @@ class TestFusedFindEdges:
         lightrag_memgraph.register()
         import lightrag.operate as operate
 
-        graph = AsyncMock()
+        graph = AsyncMock(spec=MemgraphStorage)
         graph.get_nodes_edges_batch = AsyncMock(
             return_value={
                 "alice": [("alice", "bob")],
@@ -729,7 +731,7 @@ class TestFusedFindEdges:
         lightrag_memgraph.register()
         import lightrag.operate as operate
 
-        graph = AsyncMock()
+        graph = AsyncMock(spec=MemgraphStorage)
         graph.get_nodes_edges_batch = AsyncMock(
             return_value={
                 "a": [("a", "b")],
@@ -760,7 +762,7 @@ class TestFusedFindEdges:
         lightrag_memgraph.register()
         import lightrag.operate as operate
 
-        graph = AsyncMock()
+        graph = AsyncMock(spec=MemgraphStorage)
         graph.get_nodes_edges_batch = AsyncMock(
             return_value={
                 "alice": [],

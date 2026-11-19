@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from lightrag.base import QueryParam
+from lightrag.kg.memgraph_impl import MemgraphStorage
 
 import lightrag_memgraph
 
@@ -21,7 +22,7 @@ from lightrag import operate
 
 def _mock_graph():
     """Mock graph with all batch methods our patches add."""
-    graph = AsyncMock()
+    graph = AsyncMock(spec=MemgraphStorage)
     graph.workspace = "test_ws"
 
     # Batch read methods

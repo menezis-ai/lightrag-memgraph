@@ -206,7 +206,7 @@ class TestPoolGetSessionCommunity:
 def _get_wrapper_class():
     """Extract _SafeDriverWrapper from the patched MemgraphStorage.initialize.
 
-    The class is defined inside _patch_builtin_memgraph_storage() so we
+    The class is defined inside _prepare_builtin_memgraph_storage() so we
     trigger the patch, then inspect the initialize closure to find it.
     """
     import lightrag_memgraph

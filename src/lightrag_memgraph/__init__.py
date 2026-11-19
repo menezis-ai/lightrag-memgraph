@@ -17,8 +17,11 @@ Usage:
     )
 """
 
+import inspect
 import logging
+from functools import wraps
 from importlib.metadata import version as _pkg_version
+from threading import Lock
 
 from .capabilities import MemgraphCapabilities as MemgraphCapabilities
 from .capabilities import inspect_memgraph as inspect_memgraph
@@ -36,6 +39,7 @@ except Exception:
     __version__ = "dev"
 
 _registered = False
+_registration_lock = Lock()
 
 __all__ = [
     "register",
@@ -50,65 +54,65 @@ __all__ = [
 
 
 def register() -> None:
-    """Monkey-patch LightRAG's storage registries to add Memgraph backends.
+    """Install process-wide Memgraph integration before creating LightRAG instances."""
+    with _registration_lock:
+        if not _registered:
+            _register()
 
-    Safe to call multiple times (idempotent).
-    Patches 3 dicts in lightrag.kg: STORAGE_IMPLEMENTATIONS,
-    STORAGE_ENV_REQUIREMENTS, and STORAGES.
-    """
+
+def _register() -> None:
     global _registered
-    if _registered:
-        return
-
+    import lightrag
     import lightrag.kg as kg_registry
 
-    # 1. STORAGE_IMPLEMENTATIONS - declare our classes as valid implementations
-    _new_impls = {
-        "KV_STORAGE": "MemgraphKVStorage",
-        "VECTOR_STORAGE": "MemgraphVectorDBStorage",
-        "DOC_STATUS_STORAGE": "MemgraphDocStatusStorage",
+    upstream_version = getattr(lightrag, "__version__", None)
+    new_impls = {
+        "KV_STORAGE": ("MemgraphKVStorage", "lightrag_memgraph.kv_impl"),
+        "VECTOR_STORAGE": ("MemgraphVectorDBStorage", "lightrag_memgraph.vector_impl"),
+        "DOC_STATUS_STORAGE": (
+            "MemgraphDocStatusStorage",
+            "lightrag_memgraph.docstatus_impl",
+        ),
     }
-    for storage_type, class_name in _new_impls.items():
-        impls = kg_registry.STORAGE_IMPLEMENTATIONS[storage_type]["implementations"]
-        if class_name not in impls:
-            impls.append(class_name)
-
-    # 2. STORAGE_ENV_REQUIREMENTS - env vars required for each backend
-    kg_registry.STORAGE_ENV_REQUIREMENTS.update(
-        {
-            "MemgraphKVStorage": ["MEMGRAPH_URI"],
-            "MemgraphVectorDBStorage": ["MEMGRAPH_URI"],
-            "MemgraphDocStatusStorage": ["MEMGRAPH_URI"],
-        }
-    )
-
-    # 3. STORAGES - absolute module paths (importlib ignores package= for these)
-    kg_registry.STORAGES.update(
-        {
-            "MemgraphKVStorage": "lightrag_memgraph.kv_impl",
-            "MemgraphVectorDBStorage": "lightrag_memgraph.vector_impl",
-            "MemgraphDocStatusStorage": "lightrag_memgraph.docstatus_impl",
-        }
-    )
-
-    # 4. Monkey-patch built-in MemgraphStorage to use our TLS config
-    #    and avoid session(database=...) which breaks on Community/Coordinator
-    _patch_builtin_memgraph_storage()
-
-    # Keep upstream merge writes inside LightRAG's entity/relationship locks.
-    # Deferring persistence until the document finishes loses concurrent updates.
-
-    # 5. Post-indexation hook on LightRAG._insert_done
-    _patch_insert_done()
-
     try:
-        import lightrag
+        if not isinstance(upstream_version, str):
+            raise TypeError("LightRAG version must be a string")
+        implementations = [
+            (kg_registry.STORAGE_IMPLEMENTATIONS[key]["implementations"], name)
+            for key, (name, _) in new_impls.items()
+        ]
+        if not all(isinstance(impls, list) for impls, _ in implementations):
+            raise TypeError("storage implementations must be lists")
+        if not all(
+            isinstance(registry, dict)
+            for registry in (kg_registry.STORAGE_ENV_REQUIREMENTS, kg_registry.STORAGES)
+        ):
+            raise TypeError("storage registries must be dictionaries")
+        graph_type, graph_methods = _prepare_builtin_memgraph_storage()
+        patches = (
+            (graph_type, graph_methods),
+            _prepare_operate_hot_paths(graph_type),
+            _prepare_insert_done(),
+        )
+    except (AttributeError, ImportError, KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"Unsupported LightRAG registration contract ({upstream_version}): {exc}"
+        ) from exc
 
-        suffix = f"+memgraph-{__version__}"
-        if suffix not in lightrag.__version__:
-            lightrag.__version__ = f"{lightrag.__version__}{suffix}"
-    except Exception:
-        pass
+    for impls, name in implementations:
+        if name not in impls:
+            impls.append(name)
+    for name, module in new_impls.values():
+        kg_registry.STORAGE_ENV_REQUIREMENTS[name] = ["MEMGRAPH_URI"]
+        kg_registry.STORAGES[name] = module
+    for target, methods in patches:
+        for name, method in methods.items():
+            setattr(target, name, method)
+
+    # Upstream merge writes stay inside LightRAG's entity/relationship locks.
+    suffix = f"+memgraph-{__version__}"
+    if suffix not in upstream_version:
+        lightrag.__version__ = upstream_version + suffix
 
     _registered = True
     msg = (
@@ -123,7 +127,21 @@ def register() -> None:
     logger.info(msg)
 
 
-def _patch_builtin_memgraph_storage():
+def _validate_signature(name, method, replacement, *, allow_shorter=False):
+    original = inspect.signature(method)
+    expected = inspect.signature(replacement)
+    # Remove annotations so upstream type hints can evolve independently.
+    original_params = tuple(p.replace(annotation=p.empty) for p in original.parameters.values())
+    expected_params = tuple(p.replace(annotation=p.empty) for p in expected.parameters.values())
+    compatible = original_params == expected_params or (
+        allow_shorter and original_params == expected_params[:-1]
+    )
+    if not compatible or inspect.iscoroutinefunction(method) != inspect.iscoroutinefunction(replacement):
+        raise TypeError(f"{name}{original} does not match {expected}")
+    return len(original_params) == len(expected_params)
+
+
+def _prepare_builtin_memgraph_storage():
     """Replace MemgraphStorage.initialize to support MEMGRAPH_ENCRYPTED
     and wrap the driver so that database routing works correctly for both
     direct (``bolt://``) and routing (``neo4j+s://``) protocols.
@@ -138,8 +156,6 @@ def _patch_builtin_memgraph_storage():
     without having to monkey-patch each one individually.
     """
     from contextlib import asynccontextmanager
-    from functools import wraps
-    import inspect
 
     from lightrag.base import BaseGraphStorage
     from lightrag.kg.memgraph_impl import MemgraphStorage
@@ -153,6 +169,14 @@ def _patch_builtin_memgraph_storage():
         guard_graph_method, initialization_context, initialize_identity,
         invalidate_identity, mark_identity_ready, require_identity, storage_label,
     )
+
+    inspect.signature(BaseGraphStorage.__init__).bind(
+        None, namespace=None, workspace=None, global_config=None, embedding_func=None
+    )
+    if not callable(get_data_init_lock):
+        raise TypeError("get_data_init_lock is not callable")
+    inspect.signature(get_data_init_lock).bind()
+    methods = {}
 
     _original_logger = None
     try:
@@ -175,17 +199,18 @@ def _patch_builtin_memgraph_storage():
         self._driver = None
         invalidate_identity(self)
 
-    MemgraphStorage.__init__ = _patched_init
+    methods["__init__"] = _patched_init
 
     def _physical_graph_label(self):
         return storage_label("graph", self.workspace, self.namespace)
 
-    MemgraphStorage._get_workspace_label = _physical_graph_label
+    methods["_get_workspace_label"] = _physical_graph_label
 
     # Older LightRAG writers interpolate entity_type as a label. Keep their
     # immediate transaction/retry path and reject unsafe delimiters before I/O.
     if not getattr(MemgraphStorage.upsert_node, "_lightrag_memgraph_validates_entity_type", False):
         original_upsert_node = MemgraphStorage.upsert_node
+        inspect.signature(original_upsert_node).bind(None, None, None)
 
         async def _safe_upsert_node(self, node_id, node_data):
             if "entity_type" in node_data:
@@ -195,13 +220,14 @@ def _patch_builtin_memgraph_storage():
 
         _safe_upsert_node._lightrag_memgraph_validates_entity_type = True
         _safe_upsert_node._lightrag_memgraph_identity_guarded = True
-        MemgraphStorage.upsert_node = _safe_upsert_node
+        methods["upsert_node"] = _safe_upsert_node
 
     batch_upsert = getattr(MemgraphStorage, "upsert_nodes_batch", None)
     if batch_upsert is not None and not getattr(
         batch_upsert, "_lightrag_memgraph_validates_entity_type", False
     ):
         original_upsert_nodes_batch = batch_upsert
+        inspect.signature(batch_upsert).bind(None, None)
 
         async def _safe_upsert_nodes_batch(self, nodes):
             for _, node_data in nodes:
@@ -212,7 +238,7 @@ def _patch_builtin_memgraph_storage():
 
         _safe_upsert_nodes_batch._lightrag_memgraph_validates_entity_type = True
         _safe_upsert_nodes_batch._lightrag_memgraph_identity_guarded = True
-        MemgraphStorage.upsert_nodes_batch = _safe_upsert_nodes_batch
+        methods["upsert_nodes_batch"] = _safe_upsert_nodes_batch
 
     class _SafeDriverWrapper:
         """Thin proxy around an AsyncDriver that intercepts session().
@@ -345,7 +371,7 @@ def _patch_builtin_memgraph_storage():
                     )
                 raise
 
-    MemgraphStorage.initialize = _patched_initialize
+    methods["initialize"] = _patched_initialize
 
     # -- Batch overrides: single-UNWIND queries instead of N round-trips --
 
@@ -602,16 +628,17 @@ def _patch_builtin_memgraph_storage():
             )
         return edge_data, edge_degrees
 
-    MemgraphStorage.get_nodes_batch = _patched_get_nodes_batch
-    MemgraphStorage.node_degrees_batch = _patched_node_degrees_batch
-    MemgraphStorage.get_edges_batch = _patched_get_edges_batch
-    MemgraphStorage.edge_degrees_batch = _patched_edge_degrees_batch
-    MemgraphStorage.get_nodes_edges_batch = _patched_get_nodes_edges_batch
-    MemgraphStorage.get_nodes_with_degrees_batch = _patched_get_nodes_with_degrees_batch
-    MemgraphStorage.get_edges_with_degrees_batch = _patched_get_edges_with_degrees_batch
+    methods["get_nodes_batch"] = _patched_get_nodes_batch
+    methods["node_degrees_batch"] = _patched_node_degrees_batch
+    methods["get_edges_batch"] = _patched_get_edges_batch
+    methods["edge_degrees_batch"] = _patched_edge_degrees_batch
+    methods["get_nodes_edges_batch"] = _patched_get_nodes_edges_batch
+    methods["get_nodes_with_degrees_batch"] = _patched_get_nodes_with_degrees_batch
+    methods["get_edges_with_degrees_batch"] = _patched_get_edges_with_degrees_batch
 
     if not getattr(MemgraphStorage.finalize, "_lightrag_memgraph_identity_finalizer", False):
         original_finalize = MemgraphStorage.finalize
+        inspect.signature(original_finalize).bind(None)
 
         @wraps(original_finalize)
         async def _identity_finalize(self):
@@ -619,36 +646,46 @@ def _patch_builtin_memgraph_storage():
             return await original_finalize(self)
 
         _identity_finalize._lightrag_memgraph_identity_finalizer = True
-        MemgraphStorage.finalize = _identity_finalize
+        methods["finalize"] = _identity_finalize
 
-    for name in dir(MemgraphStorage):
+    for name, replacement in methods.items():
+        original = getattr(MemgraphStorage, name, None)
+        if original is None and name in {
+            "get_nodes_with_degrees_batch", "get_edges_with_degrees_batch"
+        }:
+            continue
+        _validate_signature(f"MemgraphStorage.{name}", original, replacement)
+
+    for name in sorted(set(dir(MemgraphStorage)) | methods.keys()):
         if name.startswith("_") or name in {"initialize", "finalize", "index_done_callback"}:
             continue
-        method = getattr(MemgraphStorage, name)
+        method = methods.get(name) or getattr(MemgraphStorage, name)
         if inspect.iscoroutinefunction(method) and not getattr(method, "_lightrag_memgraph_identity_guarded", False):
-            setattr(MemgraphStorage, name, guard_graph_method(method))
-
-    # -- Monkey-patch operate.py hot paths to use fused queries --
-    _patch_operate_hot_paths()
+            methods[name] = guard_graph_method(method)
+    return MemgraphStorage, methods
 
 
-def _patch_operate_hot_paths():
-    """Replace two operate.py functions to use fused single-query methods.
-
-    Falls back to the original asyncio.gather() pattern when the graph
-    storage backend does not expose fused methods (non-Memgraph).
-    """
-    import asyncio
-
+def _prepare_operate_hot_paths(graph_type):
+    """Use fused queries for Memgraph and delegate other graphs to LightRAG."""
     import lightrag.operate as operate
     from lightrag.utils import logger as _lr_logger
 
-    _original_get_node_data = operate._get_node_data
-    _original_find_edges = operate._find_most_related_edges_from_entities
+    _original_get_node_data = inspect.unwrap(
+        operate._get_node_data, stop=lambda method: not getattr(method, "_memgraph_fused", False)
+    )
+    _original_find_edges = inspect.unwrap(
+        operate._find_most_related_edges_from_entities,
+        stop=lambda method: not getattr(method, "_memgraph_fused", False),
+    )
 
     async def _fused_get_node_data(
         query, knowledge_graph_inst, entities_vdb, query_param, query_embedding=None
     ):
+        query_kwargs = {"query_embedding": query_embedding} if accepts_embedding else {}
+        if not isinstance(knowledge_graph_inst, graph_type):
+            return await _original_get_node_data(
+                query, knowledge_graph_inst, entities_vdb, query_param, **query_kwargs
+            )
         _lr_logger.info(
             f"Query nodes: {query} (top_k:{query_param.top_k}, "
             f"cosine:{entities_vdb.cosine_better_than_threshold})"
@@ -662,16 +699,9 @@ def _patch_operate_hot_paths():
 
         node_ids = [r["entity_name"] for r in results]
 
-        if hasattr(knowledge_graph_inst, "get_nodes_with_degrees_batch"):
-            (
-                nodes_dict,
-                degrees_dict,
-            ) = await knowledge_graph_inst.get_nodes_with_degrees_batch(node_ids)
-        else:
-            nodes_dict, degrees_dict = await asyncio.gather(
-                knowledge_graph_inst.get_nodes_batch(node_ids),
-                knowledge_graph_inst.node_degrees_batch(node_ids),
-            )
+        nodes_dict, degrees_dict = await knowledge_graph_inst.get_nodes_with_degrees_batch(
+            node_ids
+        )
 
         node_datas = [nodes_dict.get(nid) for nid in node_ids]
         node_degrees = [degrees_dict.get(nid, 0) for nid in node_ids]
@@ -702,6 +732,8 @@ def _patch_operate_hot_paths():
         return node_datas, use_relations
 
     async def _fused_find_edges(node_datas, query_param, knowledge_graph_inst):
+        if not isinstance(knowledge_graph_inst, graph_type):
+            return await _original_find_edges(node_datas, query_param, knowledge_graph_inst)
         node_names = [dp["entity_name"] for dp in node_datas]
         batch_edges_dict = await knowledge_graph_inst.get_nodes_edges_batch(node_names)
 
@@ -717,19 +749,9 @@ def _patch_operate_hot_paths():
 
         edge_pairs_dicts = [{"src": e[0], "tgt": e[1]} for e in all_edges]
 
-        if hasattr(knowledge_graph_inst, "get_edges_with_degrees_batch"):
-            (
-                edge_data_dict,
-                edge_degrees_dict,
-            ) = await knowledge_graph_inst.get_edges_with_degrees_batch(
-                edge_pairs_dicts
-            )
-        else:
-            edge_pairs_tuples = list(all_edges)
-            edge_data_dict, edge_degrees_dict = await asyncio.gather(
-                knowledge_graph_inst.get_edges_batch(edge_pairs_dicts),
-                knowledge_graph_inst.edge_degrees_batch(edge_pairs_tuples),
-            )
+        edge_data_dict, edge_degrees_dict = (
+            await knowledge_graph_inst.get_edges_with_degrees_batch(edge_pairs_dicts)
+        )
 
         all_edges_data = []
         for pair in all_edges:
@@ -752,32 +774,37 @@ def _patch_operate_hot_paths():
         )
         return all_edges_data
 
-    operate._get_node_data = _fused_get_node_data
-    operate._find_most_related_edges_from_entities = _fused_find_edges
+    accepts_embedding = _validate_signature(
+        "operate._get_node_data", _original_get_node_data, _fused_get_node_data,
+        allow_shorter=True,
+    )
+    _validate_signature(
+        "operate._find_most_related_edges_from_entities", _original_find_edges, _fused_find_edges
+    )
+    node_query = wraps(_original_get_node_data)(_fused_get_node_data)
+    edge_query = wraps(_original_find_edges)(_fused_find_edges)
+    node_query._memgraph_fused = edge_query._memgraph_fused = True
+    return operate, {
+        "_get_node_data": node_query,
+        "_find_most_related_edges_from_entities": edge_query,
+    }
 
 
-def _patch_insert_done():
-    """Wrap ``LightRAG._insert_done`` to fire post-indexation hooks.
-
-    After the original method completes (all storage ``index_done_callback()``
-    have run), every callback registered via :func:`register_post_index_hook`
-    is invoked with the ``LightRAG`` instance.
-
-    Single patch — ``_insert_done`` is called via ``self.``, so no
-    double-patch is needed.
-    """
+def _prepare_insert_done():
+    """Build the process-wide post-index hook wrapper."""
     from lightrag.lightrag import LightRAG
 
     from ._hooks import _run_post_index_hooks
 
-    _original = LightRAG._insert_done
+    original = LightRAG._insert_done
+    if getattr(original, "_memgraph_post_index_hook", False):
+        return LightRAG, {}
 
-    async def _hooked_insert_done(
-        self, pipeline_status=None, pipeline_status_lock=None
-    ):
-        await _original(self, pipeline_status, pipeline_status_lock)
+    async def hooked_insert_done(self, pipeline_status=None, pipeline_status_lock=None):
+        await original(self, pipeline_status, pipeline_status_lock)
         await _run_post_index_hooks(self)
 
-    _hooked_insert_done.__name__ = "hooked_insert_done"
-    LightRAG._insert_done = _hooked_insert_done
-    logger.info("Patched LightRAG._insert_done with post-indexation hooks")
+    _validate_signature("LightRAG._insert_done", original, hooked_insert_done)
+    wrapper = wraps(original)(hooked_insert_done)
+    wrapper._memgraph_post_index_hook = True
+    return LightRAG, {"_insert_done": wrapper}

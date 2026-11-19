@@ -250,9 +250,17 @@ class TestRegistry:
 
 
 class TestPatchRegistration:
-    def test_insert_done_patched(self):
-        """_insert_done should be patched after register()."""
-        lightrag_memgraph.register()
+    async def test_registration_reuses_wrapper_and_dispatches_hook_once(self):
         from lightrag.lightrag import LightRAG
 
-        assert "hooked" in LightRAG._insert_done.__name__
+        lightrag_memgraph.register()
+        method = LightRAG._insert_done
+        lightrag_memgraph.register()
+        assert LightRAG._insert_done is method
+
+        hook = AsyncMock()
+        register_post_index_hook(hook)
+        rag = AsyncMock()
+        rag._index_storages = MagicMock(return_value=[])
+        await method(rag)
+        hook.assert_awaited_once_with(rag)
