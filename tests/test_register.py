@@ -6,6 +6,11 @@ on LightRAG's in-memory registries, no Memgraph connection needed.
 """
 
 import importlib
+import inspect
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
 
 import lightrag.kg as kg_registry
 
@@ -58,6 +63,87 @@ class TestRegister:
             "implementations"
         ].count("MemgraphKVStorage")
         assert count == 1
+
+    def test_incompatible_upstream_signature_leaves_registration_unchanged(
+        self, monkeypatch
+    ):
+        from lightrag import LightRAG, operate
+        from lightrag.kg.memgraph_impl import MemgraphStorage
+
+        async def incompatible_insert_done(self, required_new_parameter):
+            pass
+
+        monkeypatch.setattr(lightrag_memgraph, "_registered", False)
+        monkeypatch.setattr(LightRAG, "_insert_done", incompatible_insert_done)
+        monkeypatch.delitem(kg_registry.STORAGES, "MemgraphKVStorage", raising=False)
+        graph_init = MemgraphStorage.initialize
+        node_query = operate._get_node_data
+        env_requirements = kg_registry.STORAGE_ENV_REQUIREMENTS.copy()
+        implementations = {
+            key: list(config["implementations"])
+            for key, config in kg_registry.STORAGE_IMPLEMENTATIONS.items()
+        }
+
+        with pytest.raises(RuntimeError, match=r"LightRAG\._insert_done"):
+            lightrag_memgraph.register()
+        assert not lightrag_memgraph._registered
+        assert "MemgraphKVStorage" not in kg_registry.STORAGES
+        assert kg_registry.STORAGE_ENV_REQUIREMENTS == env_requirements
+        assert {
+            key: config["implementations"]
+            for key, config in kg_registry.STORAGE_IMPLEMENTATIONS.items()
+        } == implementations
+        assert MemgraphStorage.initialize is graph_init
+        assert operate._get_node_data is node_query
+
+    async def test_non_memgraph_retrieval_matches_upstream(self, tmp_path, monkeypatch):
+        from lightrag import QueryParam, operate
+        from lightrag.kg.memgraph_impl import MemgraphStorage
+        from lightrag.kg.networkx_impl import NetworkXStorage
+
+        graph_args = dict(
+            namespace="graph",
+            workspace="patch_test",
+            global_config={"working_dir": str(tmp_path)},
+            embedding_func=None,
+        )
+        networkx = NetworkXStorage(**graph_args)
+        entities = SimpleNamespace(
+            cosine_better_than_threshold=0.5,
+            query=AsyncMock(return_value=[{"entity_name": "A"}]),
+        )
+        nodes = {"A": {"description": "node"}}
+        degrees = {"A": 1}
+        monkeypatch.setattr(networkx, "get_nodes_batch", AsyncMock(return_value=nodes))
+        monkeypatch.setattr(
+            networkx, "node_degrees_batch", AsyncMock(return_value=degrees)
+        )
+        no_edges = AsyncMock(return_value={})
+        for name in ("get_nodes_edges_batch", "get_edges_batch", "edge_degrees_batch"):
+            monkeypatch.setattr(networkx, name, no_edges)
+        for name in ("get_nodes_with_degrees_batch", "get_edges_with_degrees_batch"):
+            monkeypatch.setattr(
+                networkx,
+                name,
+                AsyncMock(side_effect=AssertionError("fused query")),
+                raising=False,
+            )
+        query = ("test", networkx, entities, QueryParam(top_k=1))
+        original_nodes = inspect.unwrap(operate._get_node_data)
+        expected = await original_nodes(*query)
+
+        lightrag_memgraph.register()
+        assert await operate._get_node_data(*query) == expected
+
+        memgraph = MemgraphStorage(**graph_args)
+        fused_nodes = AsyncMock(return_value=(nodes, degrees))
+        fused_edges = AsyncMock(return_value=({}, {}))
+        monkeypatch.setattr(memgraph, "get_nodes_with_degrees_batch", fused_nodes)
+        monkeypatch.setattr(memgraph, "get_nodes_edges_batch", no_edges)
+        monkeypatch.setattr(memgraph, "get_edges_with_degrees_batch", fused_edges)
+        assert await operate._get_node_data("test", memgraph, *query[2:]) == expected
+        fused_nodes.assert_awaited_once_with(["A"])
+        fused_edges.assert_awaited_once_with([])
 
     def test_kv_in_implementations(self):
         """MemgraphKVStorage must appear in KV_STORAGE implementations."""

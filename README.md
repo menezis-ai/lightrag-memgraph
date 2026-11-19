@@ -179,11 +179,14 @@ Direct storage instances must call `await initialize()` before data access.
 Entity types beginning with `LRMG2_` (case-insensitive) are reserved; logical
 workspace/namespace names with that prefix remain valid.
 
-LightRAG's storage registry is populated at import time. `register()` adds this
-package's three backends and patches the built-in graph backend for connection
-handling and batch reads. It also patches two internal retrieval functions and
-`LightRAG._insert_done` process-wide. The source files of LightRAG are unchanged,
-but this integration depends on the supported upstream contracts.
+`register()` checks the upstream signatures before changing the process-wide
+storage registries or methods. It adds the three package backends and adapts
+`MemgraphStorage` construction, initialization, finalization, label resolution,
+writes and batch reads for shared configuration and identity checks.
+`operate._get_node_data` and `operate._find_most_related_edges_from_entities`
+use fused queries for Memgraph and delegate other graph backends to LightRAG's
+original functions. The `LightRAG._insert_done` wrapper dispatches registered
+post-index hooks across the process after the upstream completion step.
 
 The default environment variables remain supported when no workspace argument
 is supplied. Applications that previously used `MEMGRAPH_WORKSPACE` to override
