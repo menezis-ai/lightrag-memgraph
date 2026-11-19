@@ -1,6 +1,7 @@
 """Real-server ownership, migration refusal and cross-tenant deletion regressions."""
 
 import asyncio
+import json
 import uuid
 
 import pytest
@@ -18,6 +19,17 @@ from lightrag_memgraph.migration import inspect_storage_identities
 from tests.test_storage_identity import label, stores
 
 pytestmark = pytest.mark.integration
+
+
+async def _index_definitions(session):
+    # Memgraph can update counts while reclaiming deleted rows.
+    rows = await _rows(session, "SHOW INDEX INFO")
+    return sorted(
+        json.dumps(
+            {key: value for key, value in row.items() if key != "count"}, sort_keys=True
+        )
+        for row in rows
+    )
 
 
 @pytest.fixture
@@ -221,7 +233,7 @@ async def test_legacy_data_or_even_empty_indexes_refuse_startup_without_mutation
         before = await _rows(
             session, f"MATCH (n:`{old}`) RETURN properties(n) AS props"
         )
-        schema_before = await _rows(session, "SHOW INDEX INFO")
+        schema_before = await _index_definitions(session)
     with pytest.raises(LegacyStorageError, match="ambiguous ownership"):
         await store.initialize()
     with pytest.raises(StorageIdentityError, match="not initialized"):
@@ -231,7 +243,7 @@ async def test_legacy_data_or_even_empty_indexes_refuse_startup_without_mutation
             await _rows(session, f"MATCH (n:`{old}`) RETURN properties(n) AS props")
             == before
         )
-        assert await _rows(session, "SHOW INDEX INFO") == schema_before
+        assert await _index_definitions(session) == schema_before
         assert (
             await _rows(
                 session,
@@ -299,13 +311,13 @@ async def test_inventory_is_read_only_and_reports_unknown_registry_records(scope
     await put("kv", store, "preserve")
     async with _pool.get_session() as session:
         before = await _rows(session, "MATCH (n) RETURN count(n) AS count")
-        indexes = await _rows(session, "SHOW INDEX INFO")
+        indexes = await _index_definitions(session)
     report = await inspect_storage_identities()
     assert report["read_only"] is True
     assert StorageIdentity("kv", stem, "chunks").record in report["registered"]
     async with _pool.get_session() as session:
         assert await _rows(session, "MATCH (n) RETURN count(n) AS count") == before
-        assert await _rows(session, "SHOW INDEX INFO") == indexes
+        assert await _index_definitions(session) == indexes
         # An old graph can occupy the registry label. Preserve and reject it.
         await _rows(
             session,
@@ -340,11 +352,11 @@ async def test_empty_legacy_text_index_is_preserved_and_blocks_initialization(sc
             session,
             f"CREATE TEXT INDEX `{identity.legacy_indexes[1]}` ON :`{identity.legacy_label}`(content)",
         )
-        before = await _rows(session, "SHOW INDEX INFO")
+        before = await _index_definitions(session)
     with pytest.raises(LegacyStorageError, match="ambiguous ownership"):
         await store.initialize()
     async with _pool.get_session() as session:
-        assert await _rows(session, "SHOW INDEX INFO") == before
+        assert await _index_definitions(session) == before
 
 
 @pytest.mark.parametrize("kind", ["kv", "vector", "status", "graph"])
