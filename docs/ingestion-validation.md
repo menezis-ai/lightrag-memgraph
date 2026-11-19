@@ -95,3 +95,23 @@ continuing to run their storage compatibility suites.
 Sources: [upstream parser](https://github.com/HKUDS/LightRAG/blob/v1.5.7/lightrag/parser/legacy/parser.py#L48),
 [Python thread offloading](https://docs.python.org/3/library/asyncio-task.html#asyncio.to_thread)
 and [executor shutdown semantics](https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.Executor.shutdown).
+
+## LightRAG HTTP integration
+
+The `http-api` CI job starts a dedicated Memgraph and runs the installed
+LightRAG 1.5.7 application in-process. It qualifies the real
+`POST /documents/paginated` route against Memgraph, including its pagination
+schema and the JSON response when storage raises an error.
+
+To run the same profile, point it at a disposable Memgraph instance. The test
+creates a unique workspace and the instance can be discarded after the run.
+
+```bash
+python -m pip install -e '.[test]' 'lightrag-hku[api]==1.5.7' 'neo4j>=6,<7'
+MEMGRAPH_URI=bolt://localhost:7687 LIGHTRAG_HTTP_INTEGRATION=1 \
+  python -m pytest -q tests/test_lightrag_http.py
+```
+
+The synthetic FastAPI harness in `tests/test_memgraph_http_harness.py` exercises its own
+routes and readiness behavior. Proxy and deployment failures still require the
+operational checks above.

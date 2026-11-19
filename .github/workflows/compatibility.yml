@@ -125,3 +125,27 @@ jobs:
           name: compatibility-${{ matrix.memgraph }}-${{ matrix.dependencies }}
           path: reports/*.xml
           if-no-files-found: ignore
+
+  http-api:
+    runs-on: ubuntu-latest
+    services:
+      memgraph:
+        image: memgraph/memgraph-mage:3.14.0
+        ports:
+          - 7687:7687
+        options: >-
+          --health-cmd "echo 'RETURN 1;' | mgconsole"
+          --health-interval 5s
+          --health-retries 15
+    env:
+      MEMGRAPH_URI: bolt://localhost:7687
+      LIGHTRAG_HTTP_INTEGRATION: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install LightRAG API profile
+        run: python -m pip install -e '.[test]' 'lightrag-hku[api]==1.5.7' 'neo4j>=6,<7'
+      - name: Exercise the packaged HTTP routes
+        run: python -m pytest -q tests/test_lightrag_http.py

@@ -19,7 +19,7 @@ import httpx
 from packaging.version import Version
 import pytest
 
-from tests.test_http_e2e import _build_app
+from tests.test_memgraph_http_harness import _build_app
 from lightrag_memgraph import _pool
 from lightrag_memgraph.kv_impl import MemgraphKVStorage
 

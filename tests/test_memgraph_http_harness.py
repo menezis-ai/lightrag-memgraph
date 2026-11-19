@@ -1,24 +1,10 @@
-"""
-HTTP-level e2e tests — guarantees the backend never returns HTML on errors.
+"""Synthetic FastAPI harness for HTTP interactions with Memgraph storage.
 
-Reproduces the **exact failure mode** that crashed the BNP frontend:
-
-  1. Backend slow on POST /documents/paginated (> 60s) → nginx upstream timeout
-  2. nginx returns its HTML 502 page to the frontend
-  3. The frontend parses the response as JSON → crash
-
-v0.5.1 fixed the backend slowness (indexes + parallel count/fetch) and
-``tests/test_probe_e2e.py`` covers the Cypher-level regression. **This
-module covers the HTTP layer**: even when the storage layer fails or the
-endpoint receives garbage, the backend MUST return ``application/json``
-with a parseable body — never HTML.
-
-Approach: spin up a **minimal FastAPI app** in the test that wraps a real
-``LightRAG`` instance with our Memgraph backends (via ``register()``).
-Hit it through ``httpx.AsyncClient`` + ``ASGITransport`` — no network,
-no uvicorn, no extra deps beyond the test dependencies. The shape of
-the endpoints mirrors the upstream LightRAG API but only what the
-frontend (and probes) actually call.
+The fixture supplies its own routes, response schemas and error handler. It
+exercises Memgraph through LightRAG under those conditions, including the
+pagination query that was slow in the BNP deployment. Upstream LightRAG routes
+are qualified in test_lightrag_http.py. Deployed timeouts and proxy responses
+are covered by the operational procedure in docs/ingestion-validation.md.
 
 Requires a running Memgraph instance (set ``MEMGRAPH_URI``).
 """
@@ -72,19 +58,7 @@ async def _mock_embedding(texts: list[str]) -> np.ndarray:
 
 
 def _build_app(rag: LightRAG, ready: bool = True) -> FastAPI:
-    """Minimal FastAPI app exposing the endpoints LightRAG frontend / probes hit.
-
-    The exception handler is the **regression sentinel**: if any unhandled
-    exception escapes a route, it must still serialise to JSON, never HTML.
-    Without this handler, FastAPI would return a default text/html 500 page
-    on RuntimeError — exactly what crashed the BNP frontend.
-
-    *ready* mirrors the readiness probe pattern: when False, /health and
-    business endpoints return 503 + JSON instead of attempting to use the
-    not-yet-initialised storages. This is the pattern recommended for
-    BNP-style deployments where k8s readiness probes must distinguish
-    "starting" from "broken".
-    """
+    """Expose fixture routes with explicit JSON and readiness behavior."""
     app = FastAPI()
     app.state.ready = ready
 
@@ -287,7 +261,7 @@ class TestHealthHTTP:
 
 @pytest.mark.integration
 class TestPaginatedHTTP:
-    """The exact endpoint that broke at BNP."""
+    """Fixture pagination backed by MemgraphDocStatusStorage."""
 
     async def test_returns_json_not_html(self, http_client):
         """Empty paginated must still return parseable JSON, not HTML."""
@@ -329,7 +303,7 @@ class TestPaginatedHTTP:
 
 @pytest.mark.integration
 class TestErrorResponsesAreJson:
-    """The frontend crash root cause — guarantee JSON on every status code."""
+    """The fixture error handler serializes storage and request errors as JSON."""
 
     async def test_500_via_storage_failure_returns_json(
         self, http_client, monkeypatch
