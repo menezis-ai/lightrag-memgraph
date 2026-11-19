@@ -128,7 +128,7 @@ tests are skipped. The CI matrix has 28 jobs: Memgraph **3.2.1, 3.8.1,
 
 | Profile | Python | LightRAG | Neo4j driver |
 |---------|--------|----------|--------------|
-| Minimum | 3.10 | 1.4.9 | 5.x |
+| Minimum | 3.10 | 1.4.9 | 5.16.0 |
 | Legacy | 3.12 | 1.4.16 | 6.x |
 | First 1.5 | 3.10 | 1.5.0 | 5.x |
 | Current | 3.12 | 1.5.7 | 6.x |

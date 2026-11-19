@@ -125,7 +125,7 @@ instance is created. It installs process-wide patches; see
 | Python | 3.10 or newer |
 | LightRAG | `lightrag-hku >= 1.4.9, < 1.6.0`; latest qualified stable release: 1.5.7 |
 | Memgraph with MAGE | 3.2+ storage APIs; 3.14.0 is the default development and CI target |
-| Neo4j Python Bolt driver | 6.x in the current CI profile; published metadata allows `>= 5.0.0, < 7.0.0`, with minimum-version verification tracked in [issue #24](https://github.com/menezis-ai/lightrag-memgraph/issues/24) |
+| Neo4j Python Bolt driver | 6.x in the current CI profile; supported range `>= 5.16.0, < 7.0.0`, with 5.16.0 tested in the minimum CI profile |
 
 LightRAG 1.5 support includes bounded document scheduling, immutable creation
 timestamps, content-hash lookup and partial status updates, while retaining

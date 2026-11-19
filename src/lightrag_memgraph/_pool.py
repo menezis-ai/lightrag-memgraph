@@ -171,7 +171,7 @@ def _read_connection_config(*, pool_size_override: int | None = None):
         # 5 s before reuse so the driver transparently recycles defunct
         # sockets. (Dropped from 30 s to 5 s after a 2026-06-08 reset
         # surfaced during a doc delete that idled longer than 5 s but
-        # less than 30.) Requires neo4j-driver >= 5.17 (pinned >= 5.0,<7).
+        # less than 30.) Liveness checks require Neo4j driver 5.16 or newer.
         "max_connection_lifetime": 1800,
         "liveness_check_timeout": 5,
     }
