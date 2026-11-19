@@ -18,10 +18,10 @@ from lightrag_memgraph._constants import DEFAULT_WRITE_CONCURRENCY
 def reset_semaphore():
     """Reset semaphore state between tests."""
     pool._write_semaphore = None
-    pool._semaphore_loop_id = None
+    pool._semaphore_loop = None
     yield
     pool._write_semaphore = None
-    pool._semaphore_loop_id = None
+    pool._semaphore_loop = None
 
 
 # ── _read_write_concurrency ────────────────────────────────────────────
@@ -84,7 +84,7 @@ class TestAcquireWriteSlot:
         async with pool.acquire_write_slot():
             pass
 
-    async def test_semaphore_recreated_on_loop_change(self):
+    async def test_semaphore_recreated_on_loop_change(self, closed_loop):
         # Acquire once to create the semaphore
         async with pool.acquire_write_slot():
             pass
@@ -93,7 +93,7 @@ class TestAcquireWriteSlot:
         assert old_sem is not None
 
         # Simulate a loop change
-        pool._semaphore_loop_id = -1
+        pool._semaphore_loop = closed_loop
 
         async with pool.acquire_write_slot():
             pass

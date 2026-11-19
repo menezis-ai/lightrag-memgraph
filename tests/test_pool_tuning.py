@@ -18,21 +18,21 @@ def reset_pool_state():
     """Reset pool state between tests."""
     pool._driver = None
     pool._database = None
-    pool._bound_loop_id = None
+    pool._bound_loop = None
     pool._read_driver = None
     pool._read_database = None
-    pool._read_bound_loop_id = None
+    pool._read_bound_loop = None
     pool._write_semaphore = None
-    pool._semaphore_loop_id = None
+    pool._semaphore_loop = None
     yield
     pool._driver = None
     pool._database = None
-    pool._bound_loop_id = None
+    pool._bound_loop = None
     pool._read_driver = None
     pool._read_database = None
-    pool._read_bound_loop_id = None
+    pool._read_bound_loop = None
     pool._write_semaphore = None
-    pool._semaphore_loop_id = None
+    pool._semaphore_loop = None
 
 
 # ── _read_pool_size ───────────────────────────────────────────────────

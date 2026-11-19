@@ -16,7 +16,7 @@ from lightrag_memgraph.vector_impl import MemgraphVectorDBStorage
 
 
 @pytest.mark.parametrize("read", [False, True])
-async def test_pool_replacement_does_not_block_other_coroutines(monkeypatch, read):
+async def test_pool_replacement_does_not_block_other_coroutines(monkeypatch, read, closed_loop):
     prefix = "_read" if read else ""
     old = MagicMock()
     new = MagicMock()
@@ -30,7 +30,7 @@ async def test_pool_replacement_does_not_block_other_coroutines(monkeypatch, rea
     old.close = AsyncMock(side_effect=close)
     monkeypatch.setattr(_pool, f"{prefix}_driver", old)
     monkeypatch.setattr(_pool, f"{prefix}_database", "memgraph")
-    monkeypatch.setattr(_pool, f"{prefix}_bound_loop_id", -1)
+    monkeypatch.setattr(_pool, f"{prefix}_bound_loop", closed_loop)
     monkeypatch.setattr(_pool, "_enterprise_supported", None)
     factory = MagicMock(return_value=new)
     monkeypatch.setattr(_pool.AsyncGraphDatabase, "driver", factory)
