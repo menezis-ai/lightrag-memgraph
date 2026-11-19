@@ -55,7 +55,7 @@ retrieval are optional. Your application supplies the LLM and embedding models.
 ### Install the Python package
 
 ```bash
-pip install "git+https://github.com/menezis-ai/lightrag-memgraph.git@v0.7.0"
+pip install "git+https://github.com/menezis-ai/lightrag-memgraph.git@v0.7.1"
 ```
 
 The distribution name is `lightrag-memgraph`; the Python import is
@@ -222,10 +222,10 @@ descriptions and source IDs. The real-server concurrency regressions in
 overlapping document merges for both entities and relationships in every CI
 dependency profile.
 
-The latest release is [**0.7.0**](https://github.com/menezis-ai/lightrag-memgraph/releases/tag/v0.7.0).
-See [CHANGELOG.md](CHANGELOG.md) and the [upgrade notes](docs/migration-0.7.0.md)
-before upgrading an existing database. Registration keeps the build version
-visible through LightRAG's `core_version`, with the suffix `+memgraph-0.7.0`.
+The latest release is [**0.7.1**](https://github.com/menezis-ai/lightrag-memgraph/releases/tag/v0.7.1).
+See [CHANGELOG.md](CHANGELOG.md) for changes and the [upgrade notes](docs/migration-0.7.0.md)
+for deployments moving from 0.6.x. Registration exposes the build version
+through LightRAG's `core_version`, with the suffix `+memgraph-0.7.1`.
 
 <a id="memgraph-capabilities-and-optional-retrieval-features"></a>
 

@@ -67,14 +67,14 @@ jobs:
           import lightrag_memgraph
           from lightrag_memgraph import register, inspect_memgraph
 
-          assert lightrag_memgraph.__version__ == "0.7.0"
+          assert lightrag_memgraph.__version__ == "0.7.1"
           installed = Path(lightrag_memgraph.__file__).resolve()
           assert installed.is_relative_to(Path(sysconfig.get_path("purelib")))
           package = installed.parent
           assert not any((package / name).exists() for name in ("intelligence", "server", "webui_dist"))
           register()
           import lightrag
-          assert lightrag.__version__.endswith("+memgraph-0.7.0")
+          assert lightrag.__version__.endswith("+memgraph-0.7.1")
           print(f"Testing installed wheel: {installed}")
           PY
       - name: Wait for Bolt

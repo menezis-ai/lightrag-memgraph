@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.7.1 (2026-11-20)
+
+Upgrades from 0.7.0 reuse the existing storage labels and indexes. Deployments
+moving from 0.6.x must follow the [0.7 migration guide](docs/migration-0.7.0.md).
+
+- Isolate failures in partials and callable post-index hooks. Preserve the
+  original exception and continue running subsequent hooks (#28, #36).
+  Thanks to @jsdhwfmax for the project's first community contribution.
+- Require Neo4j driver 5.16.0 and test that exact minimum in CI (#24, #38).
+- Keep shared read/write pools and the write semaphore bound to their owning
+  event loop. Reject competing live loops before touching their resources
+  and allow sequential use after shutdown (#27, #37).
+- Validate LightRAG registration contracts before applying process-wide
+  patches. Use fused retrieval for Memgraph and delegate other graph backends
+  to LightRAG's original paths (#29, #39).
+- Test pagination and storage errors through the installed LightRAG 1.5.7 API
+  in a dedicated Memgraph CI job. Compare index definitions independently of
+  asynchronously changing counts (#30, #40, #41).
+
 ## 0.7.0 (2026-10-30)
 
 0.7.0 supersedes the unpublished 0.6.2 preparation. Physical storage
