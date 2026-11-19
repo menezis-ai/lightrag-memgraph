@@ -171,21 +171,12 @@ class TestConnectionConfig:
         assert kwargs["liveness_check_timeout"] == 5
         assert kwargs["max_connection_lifetime"] == 1800
 
-    def test_driver_kwargs_accepted_by_async_driver(self):
-        """Smoke-check: the runtime neo4j driver accepts the new kwargs.
-
-        Guards against the pinned range ``neo4j>=5,<7`` shipping a build
-        that drops ``liveness_check_timeout`` (added in 5.17). We
-        construct a driver against an unreachable URI — the assert is
-        that ``AsyncGraphDatabase.driver(...)`` itself does not raise
-        ``TypeError`` because of an unknown kwarg.
-        """
+    async def test_driver_kwargs_accepted_by_async_driver(self, monkeypatch):
+        """Exercise the installed driver constructor without opening a connection."""
         from neo4j import AsyncGraphDatabase
 
-        _, _, kwargs = pool._read_connection_config()
-        # Drop auth so the constructor is pure kwarg-validation.
-        kwargs.pop("auth", None)
-        driver = AsyncGraphDatabase.driver("bolt://127.0.0.1:1", **kwargs)
-        # No await close — sync close on an unopened driver is a no-op
-        # for our purpose (no socket was opened by the constructor).
-        assert driver is not None
+        monkeypatch.setenv("MEMGRAPH_URI", "bolt://127.0.0.1:1")
+        monkeypatch.delenv("MEMGRAPH_ENCRYPTED", raising=False)
+        uri, _, kwargs = pool._read_connection_config()
+        async with AsyncGraphDatabase.driver(uri, **kwargs) as driver:
+            assert driver is not None

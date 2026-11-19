@@ -21,7 +21,7 @@ jobs:
           - dependencies: minimum
             python: "3.10"
             lightrag: "lightrag-hku==1.4.9"
-            neo4j: "neo4j>=5,<6"
+            neo4j: "neo4j==5.16.0"
           - dependencies: legacy
             python: "3.12"
             lightrag: "lightrag-hku==1.4.16"
@@ -29,7 +29,7 @@ jobs:
           - dependencies: first-1.5
             python: "3.10"
             lightrag: "lightrag-hku==1.5.0"
-            neo4j: "neo4j>=5,<6"
+            neo4j: "neo4j>=5.16,<6"
           - dependencies: current
             python: "3.12"
             lightrag: "lightrag-hku==1.5.7"
