@@ -54,7 +54,7 @@ is renamed, rewritten, dropped or automatically attributed to a tenant.
    exists. Install the reviewed 0.7 wheel or Git revision in a clean environment:
 
    ```bash
-   pip install "git+https://github.com/menezis-ai/lightrag-memgraph.git@v0.7.0"
+   pip install "git+https://github.com/menezis-ai/lightrag-memgraph.git@v0.7.1"
    ```
 
    The same-named PyPI project is a separate integration. Use
@@ -87,8 +87,10 @@ provenance for cooperating adapter clients, not protection against arbitrary
 Cypher writers or administrators.
 
 Concurrent initialization of the same identity uses a uniqueness constraint and
-bounded retries for transaction conflicts. This does not resolve the separate
-shared-driver ownership issue across simultaneously active event loops (#27).
+bounded retries for transaction conflicts. Starting with 0.7.1, the shared
+read/write pools and write semaphore belong to one live event loop per process.
+Drain active storage work and close the pools on their owning loop before
+switching loops (#27).
 
 ## Retrieval behavior changes
 
