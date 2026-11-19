@@ -2,9 +2,17 @@
 Shared fixtures for lightrag-memgraph tests.
 """
 
+import asyncio
 import os
 
 import pytest
+
+
+@pytest.fixture
+def closed_loop():
+    loop = asyncio.new_event_loop()
+    loop.close()
+    return loop
 
 
 def initialized_mock(storage):

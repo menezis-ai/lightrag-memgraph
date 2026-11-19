@@ -200,6 +200,12 @@ initialized graph instance owns another driver. With the default sizes and `W`
 graph instances, the configured upper bound is approximately **70 + 50 × W
 connections per process**, rather than a fixed three-pool total. These settings
 do not isolate Memgraph CPU, memory or locks and do not guarantee HTTP latency.
+The shared read/write pools and write semaphore support one live asyncio event
+loop per process. A second live loop gets an error while the first owns these
+resources. After storage work drains, call
+`await lightrag_memgraph._pool.close_driver()` on the owning loop before
+switching to another loop.
+
 Read-pool sessions explicitly request Neo4j `READ` access mode; HA routing still
 requires qualification on an actual Enterprise cluster.
 

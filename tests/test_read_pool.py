@@ -28,21 +28,21 @@ def reset_all_pool_state():
     """Reset ALL pool state between tests (both write and read)."""
     pool._driver = None
     pool._database = None
-    pool._bound_loop_id = None
+    pool._bound_loop = None
     pool._read_driver = None
     pool._read_database = None
-    pool._read_bound_loop_id = None
+    pool._read_bound_loop = None
     pool._write_semaphore = None
-    pool._semaphore_loop_id = None
+    pool._semaphore_loop = None
     yield
     pool._driver = None
     pool._database = None
-    pool._bound_loop_id = None
+    pool._bound_loop = None
     pool._read_driver = None
     pool._read_database = None
-    pool._read_bound_loop_id = None
+    pool._read_bound_loop = None
     pool._write_semaphore = None
-    pool._semaphore_loop_id = None
+    pool._semaphore_loop = None
 
 
 def _mock_session():
@@ -118,7 +118,7 @@ class TestDualPool:
         assert d1 is d2
         assert call_count == 1
 
-    async def test_read_driver_recreated_on_loop_change(self):
+    async def test_read_driver_recreated_on_loop_change(self, closed_loop):
         """Read driver is recreated when event loop changes."""
         mock_driver_1 = MagicMock()
         mock_driver_1.close = AsyncMock()
@@ -138,7 +138,7 @@ class TestDualPool:
             assert d1 is mock_driver_1
 
             # Simulate loop change
-            pool._read_bound_loop_id = -1
+            pool._read_bound_loop = closed_loop
 
             d2, _ = await pool._get_read_driver()
             assert d2 is mock_driver_2
@@ -149,15 +149,42 @@ class TestDualPool:
 
 
 class TestCloseDriver:
+    async def test_second_live_loop_cannot_replace_or_close_active_pools(self):
+        drivers = [AsyncMock(), AsyncMock()]
+        with patch.object(pool.AsyncGraphDatabase, "driver", side_effect=drivers):
+            async with pool.acquire_write_slot():
+                write, _ = await pool.get_driver()
+                read, _ = await pool._get_read_driver()
+                semaphore = pool._get_write_semaphore()
+
+                async def second_loop():
+                    for operation in (pool.get_driver, pool._get_read_driver, pool.close_driver):
+                        with pytest.raises(RuntimeError, match="another active event loop"):
+                            await operation()
+                    with pytest.raises(RuntimeError, match="another active event loop"):
+                        async with pool.acquire_write_slot():
+                            pytest.fail("second loop acquired a write slot")
+
+                await asyncio.to_thread(asyncio.run, second_loop())
+                assert (await pool.get_driver())[0] is write
+                assert (await pool._get_read_driver())[0] is read
+                assert pool._get_write_semaphore() is semaphore
+                for driver in drivers:
+                    driver.close.assert_not_awaited()
+
+            await pool.close_driver()
+            for driver in drivers:
+                driver.close.assert_awaited_once()
+
     async def test_close_both_drivers(self):
         """close_driver() closes both write and read drivers."""
         write_drv = AsyncMock()
         read_drv = AsyncMock()
 
         pool._driver = write_drv
-        pool._bound_loop_id = id(asyncio.get_running_loop())
+        pool._bound_loop = asyncio.get_running_loop()
         pool._read_driver = read_drv
-        pool._read_bound_loop_id = id(asyncio.get_running_loop())
+        pool._read_bound_loop = asyncio.get_running_loop()
 
         await pool.close_driver()
 
@@ -166,13 +193,13 @@ class TestCloseDriver:
         assert pool._driver is None
         assert pool._read_driver is None
         assert pool._read_database is None
-        assert pool._read_bound_loop_id is None
+        assert pool._read_bound_loop is None
 
     async def test_close_only_write_when_no_read(self):
         """close_driver() handles case where read pool was never created."""
         write_drv = AsyncMock()
         pool._driver = write_drv
-        pool._bound_loop_id = id(asyncio.get_running_loop())
+        pool._bound_loop = asyncio.get_running_loop()
 
         await pool.close_driver()
 

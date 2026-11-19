@@ -1,11 +1,9 @@
 """
 Shared async connection pool for all Memgraph storage backends.
 
-Singleton pattern: one Bolt driver per event loop, shared across
-MemgraphStorage (built-in graph), KV, Vector, and DocStatus.
-
-Handles event loop changes (e.g. between test functions) by detecting
-when the loop has changed and recreating the driver.
+The shared KV, Vector and DocStatus read/write pools and write semaphore
+belong to one live event loop per process. A new loop can take over after
+shutdown or after the previous loop has closed.
 """
 
 import asyncio
@@ -40,17 +38,30 @@ _MUST_BE_POSITIVE = "must be >= 1"
 _thread_lock = threading.Lock()
 _driver = None
 _database = None
-_bound_loop_id = None
+_bound_loop = None
 
 _write_semaphore = None
-_semaphore_loop_id = None
+_semaphore_loop = None
 
 _read_driver = None
 _read_database = None
-_read_bound_loop_id = None
+_read_bound_loop = None
 _driver_scope = None
 _read_driver_scope = None
 _identity_epoch = 0
+_closing = False
+
+
+def _check_event_loop(current_loop):
+    # Call with _thread_lock held before reading or changing shared state.
+    if _closing:
+        raise RuntimeError("Memgraph shared pools are closing")
+    for owner in (_bound_loop, _read_bound_loop, _semaphore_loop):
+        if owner is not None and owner is not current_loop and not owner.is_closed():
+            raise RuntimeError(
+                "Memgraph shared pools belong to another active event loop; "
+                "use its loop or shut down the pools from that loop first"
+            )
 
 
 def _check_connection_scope():
@@ -201,24 +212,18 @@ def _read_connection_config(*, pool_size_override: int | None = None):
 async def get_driver():
     """Get or create the shared AsyncGraphDatabase driver.
 
-    If the event loop has changed since the driver was created,
-    the old driver is closed and a new one is created.
+    A driver from a closed loop is replaced on demand.
 
     Returns:
         tuple: (driver, database_name)
     """
-    global _driver, _database, _bound_loop_id, _enterprise_supported, _driver_scope
+    global _driver, _database, _bound_loop, _enterprise_supported, _driver_scope
 
-    scope = _check_connection_scope()
-    current_loop_id = id(asyncio.get_running_loop())
-
-    # Fast path: driver exists and is bound to the current loop
-    if _driver is not None and _bound_loop_id == current_loop_id:
-        return _driver, _database
-
+    current_loop = asyncio.get_running_loop()
     with _thread_lock:
-        # Double-check after acquiring lock
-        if _driver is not None and _bound_loop_id == current_loop_id:
+        _check_event_loop(current_loop)
+        scope = _check_connection_scope()
+        if _driver is not None and _bound_loop is current_loop:
             return _driver, _database
 
         uri, database, driver_kwargs = _read_connection_config()
@@ -228,7 +233,7 @@ async def get_driver():
         _driver_scope = scope
         _database = database
         _enterprise_supported = None
-        _bound_loop_id = current_loop_id
+        _bound_loop = current_loop
         _parsed = urlparse(uri)
         _safe_uri = f"{_parsed.scheme}://{_parsed.hostname}:{_parsed.port}"
         logger.info(
@@ -275,21 +280,19 @@ async def _get_read_driver():
     """Get or create the shared read-only AsyncGraphDatabase driver.
 
     Separate pool from the write driver, isolating reads from write pressure.
-    If the event loop has changed, the old driver is closed and recreated.
+    A driver from a closed loop is replaced on demand.
 
     Returns:
         tuple: (driver, database_name)
     """
-    global _read_driver, _read_database, _read_bound_loop_id, _read_driver_scope
+    global _read_driver, _read_database, _read_bound_loop, _read_driver_scope
+    global _enterprise_supported
 
-    scope = _check_connection_scope()
-    current_loop_id = id(asyncio.get_running_loop())
-
-    if _read_driver is not None and _read_bound_loop_id == current_loop_id:
-        return _read_driver, _read_database
-
+    current_loop = asyncio.get_running_loop()
     with _thread_lock:
-        if _read_driver is not None and _read_bound_loop_id == current_loop_id:
+        _check_event_loop(current_loop)
+        scope = _check_connection_scope()
+        if _read_driver is not None and _read_bound_loop is current_loop:
             return _read_driver, _read_database
 
         read_pool_size = _read_read_pool_size()
@@ -298,10 +301,12 @@ async def _get_read_driver():
         )
         selected_driver = AsyncGraphDatabase.driver(uri, **driver_kwargs)
         retired_driver = _read_driver
+        if _bound_loop is not current_loop:
+            _enterprise_supported = None
         _read_driver = selected_driver
         _read_driver_scope = scope
         _read_database = database
-        _read_bound_loop_id = current_loop_id
+        _read_bound_loop = current_loop
         _parsed = urlparse(uri)
         _safe_uri = f"{_parsed.scheme}://{_parsed.hostname}:{_parsed.port}"
         logger.info(
@@ -417,23 +422,20 @@ def _read_write_concurrency() -> int:
 
 def _get_write_semaphore() -> asyncio.Semaphore:
     """Get or (re)create the write semaphore, respecting loop changes."""
-    global _write_semaphore, _semaphore_loop_id
+    global _write_semaphore, _semaphore_loop
 
-    current_loop_id = id(asyncio.get_running_loop())
-
-    if _write_semaphore is not None and _semaphore_loop_id == current_loop_id:
-        return _write_semaphore
-
+    current_loop = asyncio.get_running_loop()
     with _thread_lock:
-        if _write_semaphore is not None and _semaphore_loop_id == current_loop_id:
+        _check_event_loop(current_loop)
+        if _write_semaphore is not None and _semaphore_loop is current_loop:
             return _write_semaphore
 
         limit = _read_write_concurrency()
         _write_semaphore = asyncio.Semaphore(limit)
-        _semaphore_loop_id = current_loop_id
+        _semaphore_loop = current_loop
         logger.debug(
             "Write semaphore (re)created — loop=%d, concurrency=%d",
-            current_loop_id,
+            id(current_loop),
             limit,
         )
         return _write_semaphore
@@ -452,22 +454,24 @@ async def acquire_write_slot():
 
 
 async def close_driver():
-    """Close write and read drivers. Call on application shutdown."""
-    global _driver, _bound_loop_id, _write_semaphore, _semaphore_loop_id
-    global _read_driver, _read_database, _read_bound_loop_id
+    """Close both pools from their owning loop after its storage work drains."""
+    global _driver, _database, _bound_loop, _write_semaphore, _semaphore_loop
+    global _read_driver, _read_database, _read_bound_loop
     global _enterprise_supported, _driver_scope, _read_driver_scope, _identity_epoch
-    _identity_epoch += 1
-    if _driver is not None:
-        await _driver.close()
-        _driver = None
-        _bound_loop_id = None
-    _write_semaphore = None
-    _semaphore_loop_id = None
-    _enterprise_supported = None
-    if _read_driver is not None:
-        await _read_driver.close()
-        _read_driver = None
-        _read_database = None
-        _read_bound_loop_id = None
-    _driver_scope = None
-    _read_driver_scope = None
+    global _closing
+
+    with _thread_lock:
+        _check_event_loop(asyncio.get_running_loop())
+        _closing = True
+        _identity_epoch += 1
+    try:
+        if _driver is not None:
+            await _driver.close()
+            _driver = _database = _bound_loop = _driver_scope = None
+        if _read_driver is not None:
+            await _read_driver.close()
+            _read_driver = _read_database = _read_bound_loop = _read_driver_scope = None
+        _write_semaphore = _semaphore_loop = _enterprise_supported = None
+    finally:
+        with _thread_lock:
+            _closing = False

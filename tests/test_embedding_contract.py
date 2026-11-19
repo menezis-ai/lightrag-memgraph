@@ -224,7 +224,7 @@ async def test_slow_embedding_does_not_block_kv_writes(embedding_factory, monkey
     writes = []
     monkeypatch.setenv("MEMGRAPH_WRITE_CONCURRENCY", "1")
     monkeypatch.setattr(_pool, "_write_semaphore", None)
-    monkeypatch.setattr(_pool, "_semaphore_loop_id", None)
+    monkeypatch.setattr(_pool, "_semaphore_loop", None)
 
     async def provider(texts):
         started.set()
